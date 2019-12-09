@@ -19,21 +19,12 @@ package util
 import (
 	"bufio"
 	"errors"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
-	"strings"
+	"path/filepath"
 )
-
-// Run wraps the exec.Cmd.Run() command and sets the standard output.
-// TODO: Should this take an error code argument/return an error code?
-func Run(c *exec.Cmd) {
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	if err := c.Run(); err != nil {
-		log.Fatalf("Command %q failed: %v", strings.Join(c.Args, " "), err)
-	}
-}
 
 /*
 #############################################################################
@@ -70,9 +61,8 @@ common::askyorn () {
 }
 */
 
-func Ask(question, expectedResponse string, retries int) (string, bool, error) {
+func Ask(question, expectedResponse string, retries int) (answer string, success bool, err error) {
 	attempts := 1
-	answer := ""
 
 	if retries < 0 {
 		log.Printf("Retries was set to a number less than zero (%d). Please specify a positive number of retries or zero, if you want to ask unconditionally.", retries)
@@ -95,19 +85,39 @@ func Ask(question, expectedResponse string, retries int) (string, bool, error) {
 	}
 
 	log.Printf("Expected response was not provided. Retries exceeded.")
-	return answer, false, errors.New("Expected response was not input. Retries exceeded.")
+	return answer, false, errors.New("expected response was not input. Retries exceeded")
 }
 
-// CommandsAvailable verifies that the specified `commands` are available
-// within the current `$PATH` environment and returns true if so. The function
-// does not check for duplicates nor if the provided slice is empty.
-func CommandsAvailable(commands []string) (ok bool) {
-	ok = true
-	for _, command := range commands {
-		if _, err := exec.LookPath(command); err != nil {
-			log.Printf("Unable to %v", err)
-			ok = false
-		}
+// FakeGOPATH creates a temp directory, links the base directory into it and
+// sets the GOPATH environment variable to it.
+func FakeGOPATH(srcDir string) (string, error) {
+	log.Printf("Linking repository into temp dir")
+	baseDir, err := ioutil.TempDir("", "ff-")
+	if err != nil {
+		return "", err
 	}
-	return ok
+
+	log.Printf("New working directory is %q", baseDir)
+
+	os.Setenv("GOPATH", baseDir)
+	log.Printf("GOPATH: %s", os.Getenv("GOPATH"))
+
+	gitRoot := fmt.Sprintf("%s/src/k8s.io", baseDir)
+	if err := os.MkdirAll(gitRoot, 0o755); err != nil {
+		return "", err
+	}
+	gitRoot = filepath.Join(gitRoot, "kubernetes")
+
+	// link the repo into the working directory
+	log.Printf("Creating symlink from %q to %q", srcDir, gitRoot)
+	if err := os.Symlink(srcDir, gitRoot); err != nil {
+		return "", err
+	}
+
+	log.Printf("Changing working directory to %s", gitRoot)
+	if err := os.Chdir(gitRoot); err != nil {
+		return "", err
+	}
+
+	return gitRoot, nil
 }

@@ -1,3 +1,19 @@
+/*
+Copyright 2019 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package notes
 
 import (
@@ -72,7 +88,8 @@ func TestReleaseNoteParsing(t *testing.T) {
 		fmt.Println(sha)
 		commit, _, err := client.Repositories.GetCommit(ctx, "kubernetes", "kubernetes", sha)
 		require.NoError(t, err)
-		prs, err := PRsFromCommit(client, commit)
+		prs, err := PRsFromCommit(client, nil, commit)
+		require.NoError(t, err)
 		_, err = ReleaseNoteFromCommit(&Result{commit: commit, pullRequest: prs[0]}, client, "0.1")
 		require.NoError(t, err)
 	}
@@ -173,21 +190,21 @@ func TestDocumentationFromString(t *testing.T) {
 
 func TestClassifyURL(t *testing.T) {
 	// A KEP
-	url, err := url.Parse("http://github.com/kubernetes/enhancements/blob/master/keps/sig-cli/kubectl-staging.md")
+	u, err := url.Parse("http://github.com/kubernetes/enhancements/blob/master/keps/sig-cli/kubectl-staging.md")
 	require.Equal(t, err, nil)
-	result := classifyURL(url)
+	result := classifyURL(u)
 	require.Equal(t, result, DocTypeKEP)
 
 	// An official documentation
-	url, err = url.Parse("https://kubernetes.io/docs/concepts/#kubernetes-objects")
+	u, err = url.Parse("https://kubernetes.io/docs/concepts/#kubernetes-objects")
 	require.Equal(t, err, nil)
-	result = classifyURL(url)
+	result = classifyURL(u)
 	require.Equal(t, result, DocTypeOfficial)
 
 	// An external documentation
-	url, err = url.Parse("https://google.com/")
+	u, err = url.Parse("https://google.com/")
 	require.Equal(t, err, nil)
-	result = classifyURL(url)
+	result = classifyURL(u)
 	require.Equal(t, result, DocTypeExternal)
 }
 
@@ -213,7 +230,7 @@ func TestGetPRNumberFromCommitMessage(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			prs, err := prsForCommit(tc.commitMessage)
+			prs, err := prsNumForCommitFromMessage(tc.commitMessage)
 			if err != nil {
 				t.Fatalf("Expected no error to occur but got %v", err)
 			}
@@ -222,5 +239,4 @@ func TestGetPRNumberFromCommitMessage(t *testing.T) {
 			}
 		})
 	}
-
 }

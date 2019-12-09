@@ -17,9 +17,7 @@ limitations under the License.
 package cmd
 
 import (
-	"fmt"
 	"log"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -31,8 +29,9 @@ var rootCmd = &cobra.Command{
 }
 
 type rootOptions struct {
-	nomock  bool
-	cleanup bool
+	nomock   bool
+	cleanup  bool
+	repoPath string
 }
 
 var rootOpts = &rootOptions{}
@@ -50,24 +49,9 @@ func init() {
 
 	rootCmd.PersistentFlags().BoolVar(&rootOpts.nomock, "nomock", false, "nomock flag")
 	rootCmd.PersistentFlags().BoolVar(&rootOpts.cleanup, "cleanup", false, "cleanup flag")
+	rootCmd.PersistentFlags().StringVar(&rootOpts.repoPath, "repo", "", "the local path to the repository to be used")
 }
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
-}
-
-func cleanupTmpDir(dir string) error {
-	log.Printf("Deleting %s...", dir)
-	err := os.RemoveAll(dir)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func exitWithHelp(cmd *cobra.Command, err string) {
-	fmt.Fprintln(os.Stderr, err)
-	cmd.Help()
-	os.Exit(1)
 }

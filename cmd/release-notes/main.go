@@ -1,3 +1,19 @@
+/*
+Copyright 2019 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package main
 
 import (
@@ -15,6 +31,7 @@ import (
 	"github.com/kolide/kit/env"
 	"golang.org/x/oauth2"
 
+	"k8s.io/release/pkg/git"
 	"k8s.io/release/pkg/notes"
 )
 
@@ -183,7 +200,7 @@ func (o *options) GetReleaseNotes() (notes.ReleaseNotes, notes.ReleaseNotesHisto
 	// Fetch a list of fully-contextualized release notes
 	level.Info(o.logger).Log("msg", "fetching all commits. this might take a while...")
 
-	opts := []notes.GithubApiOption{notes.WithContext(ctx)}
+	opts := []notes.GitHubAPIOption{notes.WithContext(ctx)}
 	if o.githubOrg != "" {
 		opts = append(opts, notes.WithOrg(o.githubOrg))
 	}
@@ -296,11 +313,16 @@ func parseOptions(args []string, logger log.Logger) (*options, error) {
 
 	// Check if we want to automatically discover the revisions
 	if opts.discoverMode == revisionDiscoveryModeMinorToLatest {
-		repo, err := notes.NewKubernetesRepo(opts.repoPath, opts.githubOrg, opts.githubRepo)
+		repo, err := git.CloneOrOpenGitHubRepo(
+			opts.repoPath,
+			opts.githubOrg,
+			opts.githubRepo,
+			false,
+		)
 		if err != nil {
 			return nil, err
 		}
-		start, end, err := repo.DiscoverRevs(logger)
+		start, end, err := repo.LatestNonPatchFinalToLatest()
 		if err != nil {
 			return nil, err
 		}
@@ -312,18 +334,23 @@ func parseOptions(args []string, logger log.Logger) (*options, error) {
 
 	// The start SHA is required.
 	if opts.startSHA == "" && opts.startRev == "" {
-		return nil, errors.New("The starting commit hash must be set via -start-sha, $START_SHA, -start-rev or $START_REV")
+		return nil, errors.New("the starting commit hash must be set via -start-sha, $START_SHA, -start-rev or $START_REV")
 	}
 
 	// The end SHA is required.
 	if opts.endSHA == "" && opts.endRev == "" {
-		return nil, errors.New("The ending commit hash must be set via -end-sha, $END_SHA, -end-rev or $END_REV")
+		return nil, errors.New("the ending commit hash must be set via -end-sha, $END_SHA, -end-rev or $END_REV")
 	}
 
 	// Check if we have to parse a revision
 	if opts.startRev != "" || opts.endRev != "" {
 		level.Info(logger).Log("msg", "cloning/updating repository to discover start or end sha")
-		repo, err := notes.NewKubernetesRepo(opts.repoPath, opts.githubOrg, opts.githubRepo)
+		repo, err := git.CloneOrOpenGitHubRepo(
+			opts.repoPath,
+			opts.githubOrg,
+			opts.githubRepo,
+			false,
+		)
 		if err != nil {
 			return nil, err
 		}

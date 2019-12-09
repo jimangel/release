@@ -1,0 +1,262 @@
+/*
+Copyright 2019 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package command
+
+import (
+	"bytes"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"syscall"
+
+	"github.com/pkg/errors"
+)
+
+// A generic command abstraction
+type Command struct {
+	cmds []*command
+}
+
+// The internal command representation
+type command struct {
+	*exec.Cmd
+	pipeWriter *io.PipeWriter
+}
+
+// A generic command exit status
+type Status struct {
+	exitCode syscall.WaitStatus
+	stdOut   string
+	stdErr   string
+}
+
+// New creates a new command from the provided arguments.
+func New(cmd string, args ...string) *Command {
+	return NewWithWorkDir("", cmd, args...)
+}
+
+// NewWithWorkDir creates a new command from the provided workDir and the command
+// arguments.
+func NewWithWorkDir(workDir, cmd string, args ...string) *Command {
+	return &Command{
+		cmds: []*command{{
+			Cmd:        cmdWithDir(workDir, cmd, args...),
+			pipeWriter: nil,
+		}},
+	}
+}
+
+func cmdWithDir(dir, cmd string, args ...string) *exec.Cmd {
+	c := exec.Command(cmd, args...)
+	c.Dir = dir
+	return c
+}
+
+// Pipe creates a new command where the previous should be piped to
+func (c *Command) Pipe(cmd string, args ...string) *Command {
+	pipeCmd := cmdWithDir(c.cmds[0].Dir, cmd, args...)
+
+	reader, writer := io.Pipe()
+	c.cmds[len(c.cmds)-1].Stdout = writer
+	pipeCmd.Stdin = reader
+
+	c.cmds = append(c.cmds, &command{
+		Cmd:        pipeCmd,
+		pipeWriter: writer,
+	})
+	return c
+}
+
+// Run starts the command and waits for it to finish. It returns an error if
+// the command execution was not possible at all, otherwise the Status.
+// This method prints the commands output during execution
+func (c *Command) Run() (res *Status, err error) {
+	return c.run(true)
+}
+
+// Run starts the command and waits for it to finish. It returns an error if
+// the command execution was not successful.
+func (c *Command) RunSuccess() (err error) {
+	res, err := c.run(true)
+	if err != nil {
+		return err
+	}
+	if !res.Success() {
+		return errors.Errorf("command %v did not succeed", c.String())
+	}
+	return nil
+}
+
+// String returns a string representation of the full command
+func (c *Command) String() string {
+	str := []string{}
+	for _, x := range c.cmds {
+		str = append(str, x.String())
+	}
+	return strings.Join(str, " | ")
+}
+
+// Run starts the command and waits for it to finish. It returns an error if
+// the command execution was not possible at all, otherwise the Status.
+// This method does not print the output of the command during its execution.
+func (c *Command) RunSilent() (res *Status, err error) {
+	return c.run(false)
+}
+
+// Run starts the command and waits for it to finish. It returns an error if
+// the command execution was not successful.
+// This method does not print the output of the command during its execution.
+func (c *Command) RunSilentSuccess() (err error) {
+	res, err := c.run(false)
+	if err != nil {
+		return err
+	}
+	if !res.Success() {
+		return errors.Errorf("command %v did not succeed", c.String())
+	}
+	return nil
+}
+
+// run is the internal run method
+func (c *Command) run(printOutput bool) (res *Status, err error) {
+	log.Printf("Running command: %v", c.String())
+	var runErr error
+	stdOutBuffer := &bytes.Buffer{}
+	stdErrBuffer := &bytes.Buffer{}
+	status := &Status{}
+	waitGroup := sync.WaitGroup{}
+
+	for i, cmd := range c.cmds {
+		// Last command handling
+		if i+1 == len(c.cmds) {
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				return nil, err
+			}
+			stderr, err := cmd.StderrPipe()
+			if err != nil {
+				return nil, err
+			}
+
+			var stdOutWriter, stdErrWriter io.Writer
+			if printOutput {
+				stdOutWriter = io.MultiWriter(os.Stdout, stdOutBuffer)
+				stdErrWriter = io.MultiWriter(os.Stderr, stdErrBuffer)
+			} else {
+				stdOutWriter = io.MultiWriter(stdOutBuffer)
+				stdErrWriter = io.MultiWriter(stdErrBuffer)
+			}
+			waitGroup.Add(1)
+			go func() {
+				defer waitGroup.Done()
+				if _, err := io.Copy(stdOutWriter, stdout); err != nil {
+					log.Println("unable to copy command stdout")
+				}
+				if _, err := io.Copy(stdErrWriter, stderr); err != nil {
+					log.Println("unable to copy command stderr")
+				}
+			}()
+		}
+
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+
+		if i > 0 {
+			if err := c.cmds[i-1].Wait(); err != nil {
+				return nil, err
+			}
+		}
+
+		if cmd.pipeWriter != nil {
+			if err := cmd.pipeWriter.Close(); err != nil {
+				return nil, err
+			}
+		}
+
+		// Wait for last command in the pipe to finish
+		if i+1 == len(c.cmds) {
+			runErr = cmd.Wait()
+			waitGroup.Wait()
+		}
+	}
+
+	status.stdOut = stdOutBuffer.String()
+	status.stdErr = stdErrBuffer.String()
+
+	if exitErr, ok := runErr.(*exec.ExitError); ok {
+		if exitCode, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+			status.exitCode = exitCode
+			return status, nil
+		}
+	}
+
+	return status, runErr
+}
+
+// Success returns if a Status was successful
+func (s *Status) Success() bool {
+	return s.exitCode == 0
+}
+
+// ExitCode returns the exit status of the command status
+func (s *Status) ExitCode() int {
+	return s.exitCode.ExitStatus()
+}
+
+// Output returns stdout of the command status
+func (s *Status) Output() string {
+	return s.stdOut
+}
+
+// Error returns the stderr of the command status
+func (s *Status) Error() string {
+	return s.stdErr
+}
+
+// Execute is a convenience function which creates a new Command, executes it
+// and evaluates its status.
+func Execute(cmd string, args ...string) error {
+	status, err := New(cmd, args...).Run()
+	if err != nil {
+		return errors.Wrapf(err, "command %q is not executable", cmd)
+	}
+	if !status.Success() {
+		return errors.Errorf(
+			"command %q did not exit successful (%d)",
+			cmd, status.ExitCode(),
+		)
+	}
+	return nil
+}
+
+// Available verifies that the specified `commands` are available within the
+// current `$PATH` environment and returns true if so. The function does not
+// check for duplicates nor if the provided slice is empty.
+func Available(commands ...string) (ok bool) {
+	ok = true
+	for _, command := range commands {
+		if _, err := exec.LookPath(command); err != nil {
+			log.Printf("Unable to %v", err)
+			ok = false
+		}
+	}
+	return ok
+}

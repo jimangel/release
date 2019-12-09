@@ -10,26 +10,22 @@ load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 git_repository(
     name = "io_k8s_repo_infra",
-    commit = "db6ceb5f992254db76af7c25db2edc5469b5ea82",
+    commit = "28d05af9a236141616b47645af81c23c3437e118",
     remote = "https://github.com/kubernetes/repo-infra.git",
-    shallow_since = "1570128715 -0700",
+    shallow_since = "1575420778 -0800",
 )
 
-load("@io_k8s_repo_infra//:load.bzl", _repo_infra_repos = "repositories")
+load("@io_k8s_repo_infra//:load.bzl", "repositories")
 
-_repo_infra_repos()
+repositories()
 
 load("@io_k8s_repo_infra//:repos.bzl", "configure")
 
-configure(go_modules = None)
+configure()
 
 load("//:repos.bzl", "go_repositories")
 
 go_repositories()
-
-load("@io_k8s_repo_infra//:repos.bzl", _repo_infra_go_repos = "go_repositories")
-
-_repo_infra_go_repos()
 
 http_file(
     name = "jq",

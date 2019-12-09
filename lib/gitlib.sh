@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#
-# Copyright 2016 The Kubernetes Authors All rights reserved.
+
+# Copyright 2016 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+
 ###############################################################################
 # GIT-related constants and functions
 
@@ -309,7 +309,7 @@ gitlib::repo_state () {
   local remote=$( git -C "$TOOL_ROOT" remote -v | grep -E "$remotePattern" -m 1 | cut -f1 )
   local commit=$(git -C "$TOOL_ROOT" \
                      ls-remote --heads "$remote" refs/heads/master | cut -f1)
-  local output=$(git -C "$TOOL_ROOT" branch --contains "$commit" "$branch" 2>&-)
+  local output=$(git -C "$TOOL_ROOT" branch --contains "$commit" "$branch" 2>/dev/null)
 
   logecho -n "Checking $TOOL_ROOT state: "
   if [[ -n "$output" ]]; then
