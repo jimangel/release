@@ -28,7 +28,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func githubClient(t *testing.T) *github.Client {
+func githubClient(t *testing.T) (Client, context.Context) {
 	token, tokenSet := os.LookupEnv("GITHUB_TOKEN")
 	if !tokenSet {
 		t.Skip("GITHUB_TOKEN is not set")
@@ -38,20 +38,7 @@ func githubClient(t *testing.T) *github.Client {
 	httpClient := oauth2.NewClient(ctx, oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	))
-	return github.NewClient(httpClient)
-}
-
-func TestConfigFromOpts(t *testing.T) {
-	// fake config with an override for the org
-	c := configFromOpts(
-		WithOrg("marpaia"),
-	)
-
-	// test the override works
-	require.Equal(t, "marpaia", c.org)
-
-	// test the default value
-	require.Equal(t, "kubernetes", c.repo)
+	return WrapGithubClient(github.NewClient(httpClient)), ctx
 }
 
 func TestStripActionRequired(t *testing.T) {
@@ -77,20 +64,23 @@ func TestStripStar(t *testing.T) {
 }
 
 func TestReleaseNoteParsing(t *testing.T) {
-	client := githubClient(t)
+	client, ctx := githubClient(t)
 	commitsWithNote := []string{
 		"973dcd0c1a2555a6726aed8248ca816c9771253f",
 		"27e5971c11cfcda703a39ed670a565f0f3564713",
 	}
-	ctx := context.Background()
+	gatherer := &Gatherer{
+		Client:  client,
+		Context: ctx,
+	}
 
 	for _, sha := range commitsWithNote {
 		fmt.Println(sha)
-		commit, _, err := client.Repositories.GetCommit(ctx, "kubernetes", "kubernetes", sha)
+		commit, _, err := client.GetRepoCommit(ctx, "kubernetes", "kubernetes", sha)
 		require.NoError(t, err)
-		prs, err := PRsFromCommit(client, nil, commit)
+		prs, err := gatherer.PRsFromCommit(commit)
 		require.NoError(t, err)
-		_, err = ReleaseNoteFromCommit(&Result{commit: commit, pullRequest: prs[0]}, client, "0.1")
+		_, err = gatherer.ReleaseNoteFromCommit(&Result{commit: commit, pullRequest: prs[0]}, "0.1")
 		require.NoError(t, err)
 	}
 }

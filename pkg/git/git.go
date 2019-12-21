@@ -19,22 +19,22 @@ package git
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"k8s.io/release/pkg/command"
-
 	"github.com/blang/semver"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/config"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
 	"gopkg.in/src-d/go-git.v4/plumbing/transport"
 	"gopkg.in/src-d/go-git.v4/plumbing/transport/ssh"
+
+	"k8s.io/release/pkg/command"
 )
 
 const (
@@ -42,11 +42,38 @@ const (
 	DefaultGithubRepo = "kubernetes"
 	DefaultRemote     = "origin"
 	DefaultMasterRef  = "HEAD"
+	Master            = "master"
 
 	branchRE              = `master|release-([0-9]{1,})\.([0-9]{1,})(\.([0-9]{1,}))*$`
 	defaultGithubAuthRoot = "git@github.com:"
 	gitExecutable         = "git"
+	tagPrefix             = "v"
 )
+
+// DiscoverResult is the result of a revision discovery
+type DiscoverResult struct {
+	startSHA, startRev, endSHA, endRev string
+}
+
+// StartSHA returns the start SHA for the DiscoverResult
+func (d *DiscoverResult) StartSHA() string {
+	return d.startSHA
+}
+
+// StartRev returns the start revision for the DiscoverResult
+func (d *DiscoverResult) StartRev() string {
+	return d.startRev
+}
+
+// EndSHA returns the end SHA for the DiscoverResult
+func (d *DiscoverResult) EndSHA() string {
+	return d.endSHA
+}
+
+// EndRev returns the end revision for the DiscoverResult
+func (d *DiscoverResult) EndRev() string {
+	return d.endRev
+}
 
 // Wrapper type for a Kubernetes repository instance
 type Repo struct {
@@ -103,10 +130,10 @@ func CloneOrOpenRepo(repoPath, url string, useSSH bool) (*Repo, error) {
 		return nil, errors.New("git is needed to support all repository features")
 	}
 
-	log.Printf("Using repository url %q", url)
+	logrus.Debugf("Using repository url %q", url)
 	targetDir := ""
 	if repoPath != "" {
-		log.Printf("Using existing repository path %q", repoPath)
+		logrus.Debugf("Using existing repository path %q", repoPath)
 		_, err := os.Stat(repoPath)
 
 		if err == nil {
@@ -128,14 +155,13 @@ func CloneOrOpenRepo(repoPath, url string, useSSH bool) (*Repo, error) {
 		targetDir = t
 	}
 
-	r, err := git.PlainClone(targetDir, false, &git.CloneOptions{
+	if _, err := git.PlainClone(targetDir, false, &git.CloneOptions{
 		URL:      url,
 		Progress: os.Stdout,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
-	return &Repo{inner: r, dir: targetDir}, nil
+	return updateRepo(targetDir, useSSH)
 }
 
 // updateRepo tries to open the provided repoPath and fetches the latest
@@ -168,15 +194,19 @@ func updateRepo(repoPath string, useSSH bool) (*Repo, error) {
 }
 
 func (r *Repo) Cleanup() error {
-	log.Printf("Deleting %s...", r.dir)
+	logrus.Debugf("Deleting %s", r.dir)
 	return os.RemoveAll(r.dir)
 }
 
 // RevParse parses a git revision and returns a SHA1 on success, otherwise an
 // error.
 func (r *Repo) RevParse(rev string) (string, error) {
-	// Prefix all non-tags the default remote "origin"
-	if isVersion, _ := regexp.MatchString(`v\d+\.\d+\.\d+.*`, rev); !isVersion {
+	matched, err := regexp.MatchString(`v\d+\.\d+\.\d+.*`, rev)
+	if err != nil {
+		return "", err
+	}
+	if !matched {
+		// Prefix all non-tags the default remote "origin"
 		rev = Remotify(rev)
 	}
 
@@ -202,80 +232,118 @@ func (r *Repo) RevParseShort(rev string) (string, error) {
 
 // LatestNonPatchFinalToLatest tries to discover the start (latest v1.xx.0) and
 // end (release-1.xx or master) revision inside the repository
-func (r *Repo) LatestNonPatchFinalToLatest() (start, end string, err error) {
+func (r *Repo) LatestNonPatchFinalToLatest() (DiscoverResult, error) {
 	// Find the last non patch version tag, then resolve its revision
-	version, err := r.latestNonPatchFinalVersion()
+	versions, err := r.latestNonPatchFinalVersions()
 	if err != nil {
-		return "", "", err
+		return DiscoverResult{}, err
 	}
-	versionTag := "v" + version.String()
-	log.Printf("latest non patch version %s", versionTag)
-	start, err = r.RevParse(versionTag)
+	version := versions[0]
+	versionTag := addTagPrefix(version.String())
+	logrus.Debugf("latest non patch version %s", versionTag)
+	start, err := r.RevParse(versionTag)
 	if err != nil {
-		return "", "", err
+		return DiscoverResult{}, err
 	}
 
 	// If a release branch exists for the next version, we use it. Otherwise we
 	// fallback to the master branch.
-	end, err = r.releaseBranchOrMasterRev(version.Major, version.Minor+1)
+	end, branch, err := r.releaseBranchOrMasterRev(version.Major, version.Minor+1)
 	if err != nil {
-		return "", "", err
+		return DiscoverResult{}, err
 	}
 
-	return start, end, nil
+	return DiscoverResult{
+		startSHA: start,
+		startRev: versionTag,
+		endSHA:   end,
+		endRev:   branch,
+	}, nil
 }
 
-func (r *Repo) latestNonPatchFinalVersion() (semver.Version, error) {
-	latestFinalTag := semver.Version{}
+func (r *Repo) LatestNonPatchFinalToMinor() (DiscoverResult, error) {
+	// Find the last non patch version tag, then resolve its revision
+	versions, err := r.latestNonPatchFinalVersions()
+	if err != nil {
+		return DiscoverResult{}, err
+	}
+	if len(versions) < 2 {
+		return DiscoverResult{}, errors.New("unable to find two latest non patch versions")
+	}
+
+	latestVersion := versions[0]
+	latestVersionTag := addTagPrefix(latestVersion.String())
+	logrus.Debugf("latest non patch version %s", latestVersionTag)
+	end, err := r.RevParse(latestVersionTag)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
+
+	previousVersion := versions[1]
+	previousVersionTag := addTagPrefix(previousVersion.String())
+	logrus.Debugf("previous non patch version %s", previousVersionTag)
+	start, err := r.RevParse(previousVersionTag)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
+
+	return DiscoverResult{
+		startSHA: start,
+		startRev: previousVersionTag,
+		endSHA:   end,
+		endRev:   latestVersionTag,
+	}, nil
+}
+
+func (r *Repo) latestNonPatchFinalVersions() ([]semver.Version, error) {
+	latestVersions := []semver.Version{}
 
 	tags, err := r.inner.Tags()
 	if err != nil {
-		return latestFinalTag, err
+		return nil, err
 	}
 
-	found := false
-	_ = tags.ForEach(func(t *plumbing.Reference) error {
-		tag := strings.TrimPrefix(t.Name().Short(), "v")
+	_ = tags.ForEach(func(t *plumbing.Reference) error { // nolint: errcheck
+		tag := trimTagPrefix(t.Name().Short())
 		ver, err := semver.Make(tag)
 
 		if err == nil {
 			// We're searching for the latest, non patch final tag
 			if ver.Patch == 0 && len(ver.Pre) == 0 {
-				if ver.GT(latestFinalTag) {
-					latestFinalTag = ver
-					found = true
+				if len(latestVersions) == 0 || ver.GT(latestVersions[0]) {
+					latestVersions = append([]semver.Version{ver}, latestVersions...)
 				}
 			}
 		}
 		return nil
 	})
-	if !found {
-		return latestFinalTag, fmt.Errorf("unable to find latest non patch release")
+	if len(latestVersions) == 0 {
+		return nil, fmt.Errorf("unable to find latest non patch release")
 	}
-	return latestFinalTag, nil
+	return latestVersions, nil
 }
 
-func (r *Repo) releaseBranchOrMasterRev(major, minor uint64) (rev string, err error) {
+func (r *Repo) releaseBranchOrMasterRev(major, minor uint64) (sha, rev string, err error) {
 	relBranch := fmt.Sprintf("release-%d.%d", major, minor)
-	rev, err = r.RevParse(relBranch)
+	sha, err = r.RevParse(relBranch)
 	if err == nil {
-		log.Printf("found release branch %s", relBranch)
-		return rev, nil
+		logrus.Debugf("found release branch %s", relBranch)
+		return sha, relBranch, nil
 	}
 
-	rev, err = r.RevParse("master")
+	sha, err = r.RevParse(Master)
 	if err == nil {
-		log.Println("no release branch found, using master")
-		return rev, nil
+		logrus.Debug("no release branch found, using master")
+		return sha, Master, nil
 	}
 
-	return "", err
+	return "", "", err
 }
 
 // HasRemoteBranch takes a branch string and verifies that it exists
 // on the default remote
 func (r *Repo) HasRemoteBranch(branch string) error {
-	log.Printf("Verifying %s branch exists on the remote", branch)
+	logrus.Infof("Verifying %s branch exists on the remote", branch)
 
 	remote, err := r.inner.Remote(DefaultRemote)
 	if err != nil {
@@ -285,19 +353,18 @@ func (r *Repo) HasRemoteBranch(branch string) error {
 	// We can then use every Remote functions to retrieve wanted information
 	refs, err := remote.List(&git.ListOptions{Auth: r.auth})
 	if err != nil {
-		log.Printf("Could not list references on the remote repository.")
+		logrus.Warn("Could not list references on the remote repository.")
 		return err
 	}
 
 	for _, ref := range refs {
 		if ref.Name().IsBranch() {
 			if ref.Name().Short() == branch {
-				log.Printf("Found branch %s", ref.Name().Short())
+				logrus.Infof("Found branch %s", ref.Name().Short())
 				return nil
 			}
 		}
 	}
-	log.Printf("Could not find branch %s", branch)
 	return errors.Errorf("branch %v not found", branch)
 }
 
@@ -317,7 +384,7 @@ func (r *Repo) CheckoutBranch(name string) error {
 func IsReleaseBranch(branch string) bool {
 	re := regexp.MustCompile(branchRE)
 	if !re.MatchString(branch) {
-		log.Printf("%s is not a release branch", branch)
+		logrus.Warnf("%s is not a release branch", branch)
 		return false
 	}
 
@@ -328,7 +395,7 @@ func (r *Repo) MergeBase(from, to string) (string, error) {
 	masterRef := Remotify(from)
 	releaseRef := Remotify(to)
 
-	log.Printf("masterRef: %s, releaseRef: %s", masterRef, releaseRef)
+	logrus.Debugf("masterRef: %s, releaseRef: %s", masterRef, releaseRef)
 
 	commitRevs := []string{masterRef, releaseRef}
 	var res []*object.Commit
@@ -361,7 +428,7 @@ func (r *Repo) MergeBase(from, to string) (string, error) {
 	}
 
 	mergeBase := res[0].Hash.String()
-	log.Printf("merge base is %s", mergeBase)
+	logrus.Infof("merge base is %s", mergeBase)
 
 	return mergeBase, nil
 }
@@ -383,7 +450,7 @@ func (r *Repo) DescribeTag(rev string) (string, error) {
 		return "", err
 	}
 	if !status.Success() {
-		return "", errors.New("git describe command failed")
+		return "", errors.Errorf("git describe command failed: %s", status.Error())
 	}
 
 	return strings.TrimSpace(status.Output()), nil
@@ -401,7 +468,7 @@ func (r *Repo) Merge(from string) error {
 func (r *Repo) Push(remoteBranch string) error {
 	args := []string{"push"}
 	if r.dryRun {
-		log.Println("Won't push due to dry run repository")
+		logrus.Infof("Won't push due to dry run repository")
 		args = append(args, "--dry-run")
 	}
 	args = append(args, DefaultRemote, remoteBranch)
@@ -416,4 +483,86 @@ func (r *Repo) Head() (string, error) {
 		return "", err
 	}
 	return ref.Hash().String(), nil
+}
+
+// LatestPatchToPatch tries to discover the start (latest v1.x.[x-1]) and
+// end (latest v1.x.x) revision inside the repository for the specified release
+// branch.
+func (r *Repo) LatestPatchToPatch(branch string) (DiscoverResult, error) {
+	latestTag, err := r.latestTagForBranch(branch)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
+
+	if len(latestTag.Pre) > 0 && latestTag.Patch > 0 {
+		latestTag.Patch--
+		latestTag.Pre = nil
+	}
+
+	if latestTag.Patch == 0 {
+		return DiscoverResult{}, errors.Errorf(
+			"found non-patch version %v as latest tag on branch %s",
+			latestTag, branch,
+		)
+	}
+
+	prevTag := semver.Version{
+		Major: latestTag.Major,
+		Minor: latestTag.Minor,
+		Patch: latestTag.Patch - 1,
+	}
+
+	logrus.Debugf("parsing latest tag %s%v", tagPrefix, latestTag)
+	latestVersionTag := addTagPrefix(latestTag.String())
+	end, err := r.RevParse(latestVersionTag)
+	if err != nil {
+		return DiscoverResult{}, errors.Wrapf(err, "parsing version %v", latestTag)
+	}
+
+	logrus.Debugf("parsing previous tag %s%v", tagPrefix, prevTag)
+	previousVersionTag := addTagPrefix(prevTag.String())
+	start, err := r.RevParse(previousVersionTag)
+	if err != nil {
+		return DiscoverResult{}, errors.Wrapf(err, "parsing previous version %v", prevTag)
+	}
+
+	return DiscoverResult{
+		startSHA: start,
+		startRev: previousVersionTag,
+		endSHA:   end,
+		endRev:   latestVersionTag,
+	}, nil
+}
+
+// latestTagForBranch returns the latest available semver tag for a given branch
+func (r *Repo) latestTagForBranch(branch string) (*semver.Version, error) {
+	status, err := command.NewWithWorkDir(
+		r.Dir(), gitExecutable, "rev-list", branch, "--tags", "--max-count=1",
+	).RunSilent()
+	if err != nil {
+		return nil, err
+	}
+	if !status.Success() {
+		return nil, errors.Errorf("git rev-list command failed: %s", status.Error())
+	}
+
+	rev, err := r.DescribeTag(strings.TrimSpace(status.Output()))
+	if err != nil {
+		return nil, err
+	}
+
+	tag, err := semver.Make(trimTagPrefix(rev))
+	if err != nil {
+		return nil, err
+	}
+
+	return &tag, nil
+}
+
+func addTagPrefix(tag string) string {
+	return tagPrefix + tag
+}
+
+func trimTagPrefix(tag string) string {
+	return strings.TrimPrefix(tag, tagPrefix)
 }

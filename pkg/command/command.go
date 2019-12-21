@@ -19,14 +19,13 @@ package command
 import (
 	"bytes"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
 
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // A generic command abstraction
@@ -136,12 +135,17 @@ func (c *Command) RunSilentSuccess() (err error) {
 
 // run is the internal run method
 func (c *Command) run(printOutput bool) (res *Status, err error) {
-	log.Printf("Running command: %v", c.String())
+	logrus.Debugf("Running command: %v", c.String())
 	var runErr error
 	stdOutBuffer := &bytes.Buffer{}
 	stdErrBuffer := &bytes.Buffer{}
 	status := &Status{}
-	waitGroup := sync.WaitGroup{}
+
+	type done struct {
+		stdout error
+		stderr error
+	}
+	doneChan := make(chan done, 1)
 
 	for i, cmd := range c.cmds {
 		// Last command handling
@@ -160,18 +164,13 @@ func (c *Command) run(printOutput bool) (res *Status, err error) {
 				stdOutWriter = io.MultiWriter(os.Stdout, stdOutBuffer)
 				stdErrWriter = io.MultiWriter(os.Stderr, stdErrBuffer)
 			} else {
-				stdOutWriter = io.MultiWriter(stdOutBuffer)
-				stdErrWriter = io.MultiWriter(stdErrBuffer)
+				stdOutWriter = stdOutBuffer
+				stdErrWriter = stdErrBuffer
 			}
-			waitGroup.Add(1)
 			go func() {
-				defer waitGroup.Done()
-				if _, err := io.Copy(stdOutWriter, stdout); err != nil {
-					log.Println("unable to copy command stdout")
-				}
-				if _, err := io.Copy(stdErrWriter, stderr); err != nil {
-					log.Println("unable to copy command stderr")
-				}
+				_, stdoutErr := io.Copy(stdOutWriter, stdout)
+				_, stderrErr := io.Copy(stdErrWriter, stderr)
+				doneChan <- done{stdoutErr, stderrErr}
 			}()
 		}
 
@@ -193,8 +192,15 @@ func (c *Command) run(printOutput bool) (res *Status, err error) {
 
 		// Wait for last command in the pipe to finish
 		if i+1 == len(c.cmds) {
+			err := <-doneChan
+			if err.stdout != nil && strings.Contains(err.stdout.Error(), os.ErrClosed.Error()) {
+				return nil, errors.Wrap(err.stdout, "unable to copy stdout")
+			}
+			if err.stderr != nil && strings.Contains(err.stderr.Error(), os.ErrClosed.Error()) {
+				return nil, errors.Wrap(err.stderr, "unable to copy stderr")
+			}
+
 			runErr = cmd.Wait()
-			waitGroup.Wait()
 		}
 	}
 
@@ -254,7 +260,7 @@ func Available(commands ...string) (ok bool) {
 	ok = true
 	for _, command := range commands {
 		if _, err := exec.LookPath(command); err != nil {
-			log.Printf("Unable to %v", err)
+			logrus.Warnf("Unable to %v", err)
 			ok = false
 		}
 	}

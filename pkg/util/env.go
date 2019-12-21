@@ -1,5 +1,3 @@
-// +build tools
-
 /*
 Copyright 2019 The Kubernetes Authors.
 
@@ -16,11 +14,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// This is used to import things required by build scripts, to force `go mod` to see them as dependencies
-
-package internal
+package util
 
 import (
-	_ "github.com/maxbrunsfeld/counterfeiter/v6"
-	_ "github.com/psampaz/go-mod-outdated"
+	"os"
 )
+
+// EnvDefault returns either the provided environment variable for the given
+// `key` or the default value `def` if not set.
+func EnvDefault(key, def string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	return value
+}
+
+// IsEnvSet returns true if an environment variable is set
+func IsEnvSet(key string) bool {
+	_, ok := os.LookupEnv(key)
+	return ok
+}

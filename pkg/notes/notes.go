@@ -24,11 +24,21 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
 	"github.com/google/go-github/v28/github"
+	"github.com/nozzle/throttler"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+)
+
+const (
+	DefaultOrg  = "kubernetes"
+	DefaultRepo = "kubernetes"
+
+	// maxParallelRequests is the maximum parallel requests we shall make to the
+	// GitHub API
+	maxParallelRequests = 10
 )
 
 // ReleaseNote is the type that represents the total sum of all the information
@@ -111,70 +121,33 @@ type ReleaseNotes map[int]*ReleaseNote
 // ReleaseNotesHistory is the sorted list of PRs in the commit history
 type ReleaseNotesHistory []int
 
-// GitHubAPIOption is a type which allows for the expression of API configuration
-// via the "functional option" pattern.
-// For more information on this pattern, see the following blog post:
-// https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
-type GitHubAPIOption func(*githubAPIConfig)
-
-// githubAPIConfig is a configuration struct that is used to express optional
-// configuration for GitHub API requests
-type githubAPIConfig struct {
-	ctx    context.Context
-	org    string
-	repo   string
-	branch string
-}
-
-// WithContext allows the caller to inject a context into GitHub API requests
-func WithContext(ctx context.Context) GitHubAPIOption {
-	return func(c *githubAPIConfig) {
-		c.ctx = ctx
-	}
-}
-
-// WithOrg allows the caller to override the GitHub organization for the API
-// request. By default, it is usually "kubernetes".
-func WithOrg(org string) GitHubAPIOption {
-	return func(c *githubAPIConfig) {
-		c.org = org
-	}
-}
-
-// WithRepo allows the caller to override the GitHub repo for the API
-// request. By default, it is usually "kubernetes".
-func WithRepo(repo string) GitHubAPIOption {
-	return func(c *githubAPIConfig) {
-		c.repo = repo
-	}
-}
-
-// WithBranch allows the caller to override the repo branch for the API
-// request. By default, it is usually "master".
-func WithBranch(branch string) GitHubAPIOption {
-	return func(c *githubAPIConfig) {
-		c.branch = branch
-	}
-}
-
 type Result struct {
 	commit      *github.RepositoryCommit
 	pullRequest *github.PullRequest
 }
 
+type Gatherer struct {
+	Client  Client
+	Context context.Context
+	Org     string
+	Repo    string
+}
+
 // ListReleaseNotes produces a list of fully contextualized release notes
 // starting from a given commit SHA and ending at starting a given commit SHA.
-func ListReleaseNotes(
-	client *github.Client,
-	logger log.Logger,
+func (g *Gatherer) ListReleaseNotes(
 	branch,
 	start,
 	end,
 	requiredAuthor,
 	relVer string,
-	opts ...GitHubAPIOption,
 ) (ReleaseNotes, ReleaseNotesHistory, error) {
-	results, err := ListCommitsWithNotes(client, logger, branch, start, end, opts...)
+	commits, err := g.ListCommits(branch, start, end)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	results, err := g.ListCommitsWithNotes(commits)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -189,13 +162,12 @@ func ListReleaseNotes(
 			}
 		}
 
-		note, err := ReleaseNoteFromCommit(result, client, relVer, opts...)
+		note, err := g.ReleaseNoteFromCommit(result, relVer)
 		if err != nil {
-			level.Error(logger).Log(
-				"err", err,
-				"msg", "error getting the release note from commit while listing release notes",
-				"sha", result.commit.GetSHA(),
-			)
+			logrus.
+				WithField("err", err).
+				WithField("sha", result.commit.GetSHA()).
+				Error("getting the release note from commit while listing release notes")
 			continue
 		}
 
@@ -212,12 +184,11 @@ func ListReleaseNotes(
 			}
 			if match {
 				excluded = true
-				level.Debug(logger).Log(
-					"msg", "Excluding notes that are deemed to have no content based on filter, and should NOT be added to release notes.",
-					"sha", result.commit.GetSHA(),
-					"func", "ListReleaseNotes",
-					"filter", filter,
-				)
+				logrus.
+					WithField("sha", result.commit.GetSHA()).
+					WithField("func", "ListReleaseNotes").
+					WithField("filter", filter).
+					Debug("Excluding notes that are deemed to have no content based on filter, and should NOT be added to release notes.")
 				break
 			}
 		}
@@ -242,10 +213,10 @@ func NoteTextFromString(s string) (string, error) {
 	exps := []*regexp.Regexp{
 		// (?s) is needed for '.' to be matching on newlines, by default that's disabled
 		// we need to match ungreedy 'U', because after the notes a `docs` block can occur
-		regexp.MustCompile("(?sU)```release-note\\r\\n(?P<note>.+)\\r\\n```"),
-		regexp.MustCompile("(?sU)```dev-release-note\\r\\n(?P<note>.+)"),
+		regexp.MustCompile("(?sU)```release-note[s]?\\r\\n(?P<note>.+)\\r\\n```"),
+		regexp.MustCompile("(?sU)```dev-release-note[s]?\\r\\n(?P<note>.+)"),
 		regexp.MustCompile("(?sU)```\\r\\n(?P<note>.+)\\r\\n```"),
-		regexp.MustCompile("(?sU)```release-note\n(?P<note>.+)\n```"),
+		regexp.MustCompile("(?sU)```release-note[s]?\n(?P<note>.+)\n```"),
 	}
 
 	for _, exp := range exps {
@@ -330,8 +301,7 @@ func classifyURL(u *url.URL) DocType {
 
 // ReleaseNoteFromCommit produces a full contextualized release note given a
 // GitHub commit API resource.
-func ReleaseNoteFromCommit(result *Result, client *github.Client, relVer string, opts ...GitHubAPIOption) (*ReleaseNote, error) {
-	c := configFromOpts(opts...)
+func (g *Gatherer) ReleaseNoteFromCommit(result *Result, relVer string) (*ReleaseNote, error) {
 	pr := result.pullRequest
 
 	prBody := pr.GetBody()
@@ -343,7 +313,7 @@ func ReleaseNoteFromCommit(result *Result, client *github.Client, relVer string,
 
 	author := pr.GetUser().GetLogin()
 	authorURL := fmt.Sprintf("https://github.com/%s", author)
-	prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", c.org, c.repo, pr.GetNumber())
+	prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", g.Org, g.Repo, pr.GetNumber())
 	IsFeature := HasString(LabelsWithPrefix(pr, "kind"), "feature")
 	IsDuplicate := false
 	sigsListPretty := prettifySigList(LabelsWithPrefix(pr, "sig"))
@@ -386,182 +356,264 @@ func ReleaseNoteFromCommit(result *Result, client *github.Client, relVer string,
 
 // ListCommits lists all commits starting from a given commit SHA and ending at
 // a given commit SHA.
-func ListCommits(client *github.Client, branch, start, end string, opts ...GitHubAPIOption) ([]*github.RepositoryCommit, error) {
-	c := configFromOpts(opts...)
-
-	c.branch = branch
-
-	startCommit, _, err := client.Git.GetCommit(c.ctx, c.org, c.repo, start)
+func (g *Gatherer) ListCommits(branch, start, end string) ([]*github.RepositoryCommit, error) {
+	startCommit, _, err := g.Client.GetCommit(g.Context, g.Org, g.Repo, start)
 	if err != nil {
 		return nil, err
 	}
 
-	endCommit, _, err := client.Git.GetCommit(c.ctx, c.org, c.repo, end)
+	endCommit, _, err := g.Client.GetCommit(g.Context, g.Org, g.Repo, end)
 	if err != nil {
 		return nil, err
 	}
 
-	clo := &github.CommitsListOptions{
-		SHA:   c.branch,
-		Since: *startCommit.Committer.Date,
-		Until: *endCommit.Committer.Date,
+	allCommits := &commitList{}
+
+	worker := func(clo *github.CommitsListOptions) ([]*github.RepositoryCommit, *github.Response, error) {
+		commits, resp, err := g.Client.ListCommits(g.Context, g.Org, g.Repo, clo)
+		if err != nil {
+			return nil, nil, err
+		}
+		return commits, resp, err
+	}
+
+	clo := github.CommitsListOptions{
+		SHA:   branch,
+		Since: startCommit.GetCommitter().GetDate(),
+		Until: endCommit.GetCommitter().GetDate(),
 		ListOptions: github.ListOptions{
 			Page:    1,
 			PerPage: 100,
 		},
 	}
 
-	commits, resp, err := client.Repositories.ListCommits(c.ctx, c.org, c.repo, clo)
+	commits, resp, err := worker(&clo)
 	if err != nil {
 		return nil, err
 	}
-	clo.ListOptions.Page++
+	allCommits.Add(commits)
 
-	for clo.ListOptions.Page <= resp.LastPage {
-		commitPage, _, err := client.Repositories.ListCommits(c.ctx, c.org, c.repo, clo)
-		if err != nil {
-			return nil, err
-		}
-		commits = append(commits, commitPage...)
-		clo.ListOptions.Page++
+	remainingPages := resp.LastPage - 1
+	if remainingPages < 1 {
+		return allCommits.List(), nil
 	}
 
-	return commits, nil
+	t := throttler.New(maxParallelRequests, remainingPages)
+	for page := 2; page <= resp.LastPage; page++ {
+		clo := clo
+		clo.ListOptions.Page = page
+
+		go func() {
+			commits, _, err := worker(&clo)
+			if err == nil {
+				allCommits.Add(commits)
+			}
+			t.Done(err)
+		}()
+
+		// abort all, if we got one error
+		if t.Throttle() > 0 {
+			break
+		}
+	}
+
+	if err := t.Err(); err != nil {
+		return nil, err
+	}
+
+	return allCommits.List(), nil
+}
+
+type commitList struct {
+	sync.RWMutex
+	list []*github.RepositoryCommit
+}
+
+func (l *commitList) Add(c []*github.RepositoryCommit) {
+	l.Lock()
+	defer l.Unlock()
+	l.list = append(l.list, c...)
+}
+
+func (l *commitList) List() []*github.RepositoryCommit {
+	l.RLock()
+	defer l.RUnlock()
+	return l.list
+}
+
+// noteExclusionFilters is a list of regular expressions that match commits
+// that do NOT contain release notes. Notably, this is all of the variations of
+// "release note none" that appear in the commit log.
+var noteExclusionFilters = []*regexp.Regexp{
+	// 'none','n/a','na' case insensitive with optional trailing
+	// whitespace, wrapped in ``` with/without release-note identifier
+	// the 'none','n/a','na' can also optionally be wrapped in quotes ' or "
+	regexp.MustCompile("(?i)```(release-note[s]?\\s*)?('|\")?(none|n/a|na)?('|\")?\\s*```"),
+
+	// This filter is too aggressive within the PR body and picks up matches unrelated to release notes
+	// 'none' or 'n/a' case insensitive wrapped optionally with whitespace
+	// regexp.MustCompile("(?i)\\s*(none|n/a)\\s*"),
+
+	// simple '/release-note-none' tag
+	regexp.MustCompile("/release-note-none"),
+}
+
+// Similarly, now that the known not-release-notes are filtered out, we can
+// use some patterns to find actual release notes.
+var noteInclusionFilters = []*regexp.Regexp{
+	regexp.MustCompile("release-note"),
+	regexp.MustCompile("Does this PR introduce a user-facing change?"),
+}
+
+func matchesFilter(msg string, filters []*regexp.Regexp) *regexp.Regexp {
+	for _, filter := range filters {
+		if filter.MatchString(msg) {
+			return filter
+		}
+	}
+	return nil
+}
+
+func matchesExcludeFilter(msg string) *regexp.Regexp {
+	return matchesFilter(msg, noteExclusionFilters)
+}
+func matchesIncludeFilter(msg string) *regexp.Regexp {
+	return matchesFilter(msg, noteInclusionFilters)
 }
 
 // ListCommitsWithNotes list commits that have release notes starting from a
 // given commit SHA and ending at a given commit SHA. This function is similar
 // to ListCommits except that only commits with tagged release notes are
 // returned.
-func ListCommitsWithNotes(
-	client *github.Client,
-	logger log.Logger,
-	branch,
-	start,
-	end string,
-	opts ...GitHubAPIOption,
-) (filtered []*Result, err error) {
-	commits, err := ListCommits(client, branch, start, end, opts...)
-	if err != nil {
+//TODO: This name does not make sense anymore
+//TODO: Why is that method exported?
+func (g *Gatherer) ListCommitsWithNotes(commits []*github.RepositoryCommit) (filtered []*Result, err error) {
+	allResults := &resultList{}
+
+	nrOfCommits := len(commits)
+
+	// A note about prallelism:
+	//
+	// We make 2 different requests to GitHub further down the stack:
+	// - If we find PR numbers in a commit message, we do one API call per found
+	//   number. The assumption is, that this is mostly just one (or just a couple
+	//   of) PRs. The calls to the API do run in serial right now.
+	// - If we don't find a PR number in the commit message, we ask the API if
+	//   GitHub knows about PRs that are connected to that specific commit. The
+	//   assumption again is that this is either one or just a couple of PRs. The
+	//   results probably fit into one GitHub result page. If not, and we need to
+	//   query multiple times (paging), we currently also do that in serial.
+	//
+	// In case we parallelize the above mentioned API calls and the volume of
+	// them is bigger than expected, we might go well above the
+	// `maxParallelRequests` of parallel requests. In that case we probably
+	// should introduce the throttler as a global concept (on the Gatherer or so)
+	// and use that throttler for all API calls.
+	t := throttler.New(maxParallelRequests, nrOfCommits)
+
+	for i, commit := range commits {
+		logrus.Infof(
+			"starting to process commit %d of %d (%0.2f%%): %s",
+			i+1, nrOfCommits, (float64(i+1)/float64(nrOfCommits))*100.0,
+			commit.GetSHA(),
+		)
+
+		go func(commit *github.RepositoryCommit) {
+			res, err := g.notesForCommit(commit)
+			if err == nil && res != nil {
+				allResults.Add(res)
+			}
+			t.Done(err)
+		}(commit)
+
+		if t.Throttle() > 0 {
+			break
+		}
+	} // for range commits
+
+	if err := t.Err(); err != nil {
 		return nil, err
 	}
 
-	for i, commit := range commits {
-		level.Debug(logger).Log("msg", "################################################")
-		level.Info(logger).Log("msg", fmt.Sprintf("[%d/%d - %0.2f%%]", i+1, len(commits), (float64(i+1)/float64(len(commits)))*100.0))
-		level.Debug(logger).Log(
-			"msg", "Processing commit",
-			"func", "ListCommitsWithNotes",
-			"sha", commit.GetSHA(),
-		)
+	return allResults.List(), nil
+}
 
-		prs, err := PRsFromCommit(client, logger, commit, opts...)
-		if err != nil {
-			if err.Error() == "no matches found when parsing PR from commit" {
-				level.Debug(logger).Log(
-					"msg", fmt.Sprintf("No matches found when parsing PR from commit sha '%s'.", commit.GetSHA()),
-					"func", "ListCommitsWithNotes",
-				)
-				continue
-			}
+func (g *Gatherer) notesForCommit(commit *github.RepositoryCommit) (*Result, error) {
+	prs, err := g.PRsFromCommit(commit)
+	if err != nil {
+		if err == errNoPRIDFoundInCommitMessage || err == errNoPRFoundForCommitSHA {
+			logrus.
+				WithField("func", "ListCommitsWithNotes").
+				Debugf("No matches found when parsing PR from commit sha %q", commit.GetSHA())
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	for _, pr := range prs {
+		prBody := pr.GetBody()
+
+		logrus.
+			WithField("func", "ListCommitsWithNotes").
+			WithField("pr no", pr.GetNumber()).
+			WithField("pr body", pr.GetBody()).
+			Debugf("Obtaining PR associated with commit sha %q", commit.GetSHA())
+
+		if re := matchesExcludeFilter(prBody); re != nil {
+			logrus.
+				WithField("func", "ListCommitsWithNotes").
+				WithField("filter", re.String()).
+				Debug("Excluding notes for PR based on the exclusion filter.")
+			// try next PR
+			continue
 		}
 
-		for _, pr := range prs {
-			level.Debug(logger).Log(
-				"msg", fmt.Sprintf("Obtaining PR associated with commit sha '%s'.", commit.GetSHA()),
-				"func", "ListCommitsWithNotes",
-				"pr no", pr.GetNumber(),
-				"pr body", pr.GetBody(),
-			)
+		if re := matchesIncludeFilter(prBody); re != nil {
+			res := &Result{commit: commit, pullRequest: pr}
+			logrus.
+				WithField("func", "ListCommitsWithNotes").
+				WithField("filter", re.String()).
+				Debug("Including notes for PR based on the inclusion filter.")
 
-			// exclusionFilters is a list of regular expressions that match commits that
-			// do NOT contain release notes. Notably, this is all of the variations of
-			// "release note none" that appear in the commit log.
-			exclusionFilters := []string{
-
-				// 'none','n/a','na' case insensitive with optional trailing
-				// whitespace, wrapped in ``` with/without release-note identifier
-				// the 'none','n/a','na' can also optionally be wrapped in quotes ' or "
-				"(?i)```(release-note[s]?\\s*)?('|\")?(none|n/a|na)?('|\")?\\s*```",
-
-				// This filter is too aggressive within the PR body and picks up matches unrelated to release notes
-				// 'none' or 'n/a' case insensitive wrapped optionally with whitespace
-				// "(?i)\\s*(none|n/a)\\s*",
-
-				// simple '/release-note-none' tag
-				"/release-note-none",
-			}
-
-			excluded := false
-
-			for _, filter := range exclusionFilters {
-				match, err := regexp.MatchString(filter, pr.GetBody())
-				if err != nil {
-					return nil, err
-				}
-				if match {
-					excluded = true
-					level.Debug(logger).Log(
-						"msg", "Excluding notes for PR based on the exclusion filter.",
-						"func", "ListCommitsWithNotes",
-						"filter", filter,
-					)
-					break
-				}
-			}
-
-			if excluded {
-				continue
-			}
-
-			// Similarly, now that the known not-release-notes are filtered out, we can
-			// use some patterns to find actual release notes.
-			inclusionFilters := []string{
-				"release-note",
-				"Does this PR introduce a user-facing change?",
-			}
-
-			matched := false
-			for _, filter := range inclusionFilters {
-				match, err := regexp.MatchString(filter, pr.GetBody())
-				if err != nil {
-					return nil, err
-				}
-				if match {
-					matched = true
-					filtered = append(filtered, &Result{commit: commit, pullRequest: pr})
-					level.Debug(logger).Log(
-						"msg", "Including notes for PR based on the inclusion filter.",
-						"func", "ListCommitsWithNotes",
-						"filter", filter,
-					)
-				}
-			}
-
-			// Do not test further commmits if the first matched
-			if matched {
-				break
-			}
+			//TODO is this really intentional?
+			// Do not test further PRs for this commmit as soon as one PR matched
+			return res, nil
 		}
 	}
 
-	return filtered, nil
+	return nil, nil
+}
+
+type resultList struct {
+	sync.RWMutex
+	list []*Result
+}
+
+func (l *resultList) Add(r *Result) {
+	l.Lock()
+	defer l.Unlock()
+	l.list = append(l.list, r)
+}
+
+func (l *resultList) List() []*Result {
+	l.RLock()
+	defer l.RUnlock()
+	return l.list
 }
 
 // PRsFromCommit return an API Pull Request struct given a commit struct. This is
 // useful for going from a commit log to the PR (which contains useful info such
 // as labels).
-func PRsFromCommit(client *github.Client, logger log.Logger, commit *github.RepositoryCommit, opts ...GitHubAPIOption) (
+func (g *Gatherer) PRsFromCommit(commit *github.RepositoryCommit) (
 	[]*github.PullRequest, error,
 ) {
-	githubPRs, err := prsForCommitFromMessage(client, *commit.Commit.Message, opts...)
+	githubPRs, err := g.prsForCommitFromMessage(*commit.Commit.Message)
 	if err != nil {
-		level.Debug(logger).Log(
-			"err", err,
-			"msg", "error getting the pr numbers from commit message",
-			"sha", commit.GetSHA(),
-		)
-		return prsForCommitFromSHA(client, *commit.SHA, opts...)
+		logrus.
+			WithField("err", err).
+			WithField("sha", commit.GetSHA()).
+			Debug("getting the pr numbers from commit message")
+		return g.prsForCommitFromSHA(*commit.SHA)
 	}
 	return githubPRs, err
 }
@@ -589,23 +641,6 @@ func IsActionRequired(pr *github.PullRequest) bool {
 		}
 	}
 	return false
-}
-
-// configFromOpts is an internal helper for turning a set of functional options
-// into a populated *githubAPIConfig struct with consistent defaults.
-func configFromOpts(opts ...GitHubAPIOption) *githubAPIConfig {
-	c := &githubAPIConfig{
-		ctx:    context.Background(),
-		org:    "kubernetes",
-		repo:   "kubernetes",
-		branch: "master",
-	}
-
-	for _, opt := range opts {
-		opt(c)
-	}
-
-	return c
 }
 
 func stripActionRequired(note string) string {
@@ -646,9 +681,7 @@ func HasString(a []string, x string) bool {
 }
 
 // prsForCommitFromSHA retrieves the PR numbers for a commit given its sha
-func prsForCommitFromSHA(client *github.Client, sha string, opts ...GitHubAPIOption) (prs []*github.PullRequest, err error) {
-	c := configFromOpts(opts...)
-
+func (g *Gatherer) prsForCommitFromSHA(sha string) (prs []*github.PullRequest, err error) {
 	plo := &github.PullRequestListOptions{
 		State: "closed",
 		ListOptions: github.ListOptions{
@@ -656,14 +689,14 @@ func prsForCommitFromSHA(client *github.Client, sha string, opts ...GitHubAPIOpt
 			PerPage: 100,
 		},
 	}
-	prs, resp, err := client.PullRequests.ListPullRequestsWithCommit(c.ctx, c.org, c.repo, sha, plo)
+	prs, resp, err := g.Client.ListPullRequestsWithCommit(g.Context, g.Org, g.Repo, sha, plo)
 	if err != nil {
 		return nil, err
 	}
 
 	plo.ListOptions.Page++
 	for plo.ListOptions.Page <= resp.LastPage {
-		pResult, pResp, err := client.PullRequests.ListPullRequestsWithCommit(c.ctx, c.org, c.repo, sha, plo)
+		pResult, pResp, err := g.Client.ListPullRequestsWithCommit(g.Context, g.Org, g.Repo, sha, plo)
 		if err != nil {
 			return nil, err
 		}
@@ -673,14 +706,12 @@ func prsForCommitFromSHA(client *github.Client, sha string, opts ...GitHubAPIOpt
 	}
 
 	if len(prs) == 0 {
-		return nil, errors.Errorf("no pr found for sha %s", sha)
+		return nil, errNoPRFoundForCommitSHA
 	}
 	return prs, nil
 }
 
-func prsForCommitFromMessage(client *github.Client, commitMessage string, opts ...GitHubAPIOption) (prs []*github.PullRequest, err error) {
-	c := configFromOpts(opts...)
-
+func (g *Gatherer) prsForCommitFromMessage(commitMessage string) (prs []*github.PullRequest, err error) {
 	prsNum, err := prsNumForCommitFromMessage(commitMessage)
 	if err != nil {
 		return nil, err
@@ -689,7 +720,7 @@ func prsForCommitFromMessage(client *github.Client, commitMessage string, opts .
 	for _, pr := range prsNum {
 		// Given the PR number that we've now converted to an integer, get the PR from
 		// the API
-		res, _, err := client.PullRequests.Get(c.ctx, c.org, c.repo, pr)
+		res, _, err := g.Client.GetPullRequest(g.Context, g.Org, g.Repo, pr)
 		if err != nil {
 			return nil, err
 		}
@@ -722,7 +753,7 @@ func prsNumForCommitFromMessage(commitMessage string) (prs []int, err error) {
 	}
 
 	if prs == nil {
-		return nil, errors.New("no matches found when parsing PR from commit")
+		return nil, errNoPRIDFoundInCommitMessage
 	}
 
 	return prs, nil
@@ -748,3 +779,6 @@ func prForRegex(regex *regexp.Regexp, commitMessage string) int {
 	}
 	return pr
 }
+
+var errNoPRIDFoundInCommitMessage = errors.New("No PR IDs found in the commit message")
+var errNoPRFoundForCommitSHA = errors.New("No PR found for this commit")

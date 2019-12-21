@@ -31,26 +31,34 @@ import (
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
 )
 
-const master = "master"
-
 type testRepo struct {
-	sut          *Repo
-	dir          string
-	firstCommit  string
-	branchCommit string
-	branchName   string
-	tagCommit    string
-	tagName      string
+	sut                *Repo
+	dir                string
+	firstCommit        string
+	firstBranchCommit  string
+	secondBranchCommit string
+	branchName         string
+	firstTagCommit     string
+	firstTagName       string
+	secondTagCommit    string
+	secondTagName      string
+	thirdTagCommit     string
+	thirdTagName       string
 }
 
 // newTestRepo creates a test repo with the following structure:
 //
-// * commit `branchCommit` (HEAD -> first-branch, origin/first-branch)
+// * commit `secondBranchCommit` (tag: `thirdTagName`, HEAD -> `branchName`, origin/`branchName`)
+// | Author: John Doe <john@doe.org>
+// |
+// |     Third commit
+// |
+// * commit `firstBranchCommit` (tag: `secondTagName`, HEAD -> `branchName`, origin/`branchName`)
 // | Author: John Doe <john@doe.org>
 // |
 // |     Second commit
 // |
-// * commit `firstCommit` (tag: v0.1.0, origin/master, origin/HEAD, master)
+// * commit `firstCommit` (tag: `firstTagName`, origin/master, origin/HEAD, master)
 //   Author: John Doe <john@doe.org>
 //
 //       First commit
@@ -93,11 +101,11 @@ func newTestRepo(t *testing.T) *testRepo {
 	})
 	require.Nil(t, err)
 
-	tagName := "v0.1.0"
-	tagRef, err := cloneRepo.CreateTag(tagName, firstCommit,
+	firstTagName := "v0.1.0"
+	firstTagRef, err := cloneRepo.CreateTag(firstTagName, firstCommit,
 		&git.CreateTagOptions{
 			Tagger:  author,
-			Message: tagName,
+			Message: firstTagName,
 		},
 	)
 	require.Nil(t, err)
@@ -116,9 +124,44 @@ func newTestRepo(t *testing.T) *testRepo {
 	))
 	_, err = worktree.Add(branchTestFileName)
 	require.Nil(t, err)
-	branchCommit, err := worktree.Commit("Second commit", &git.CommitOptions{
+
+	firstBranchCommit, err := worktree.Commit("Second commit", &git.CommitOptions{
 		Author: author,
+		All:    true,
 	})
+	require.Nil(t, err)
+
+	secondTagName := "v0.1.1"
+	secondTagRef, err := cloneRepo.CreateTag(secondTagName, firstBranchCommit,
+		&git.CreateTagOptions{
+			Tagger:  author,
+			Message: firstTagName,
+		},
+	)
+	require.Nil(t, err)
+
+	const secondBranchTestFileName = "branch-test-file-2"
+	require.Nil(t, ioutil.WriteFile(
+		filepath.Join(cloneTempDir, secondBranchTestFileName),
+		[]byte("test-content"),
+		0644,
+	))
+	_, err = worktree.Add(secondBranchTestFileName)
+	require.Nil(t, err)
+
+	secondBranchCommit, err := worktree.Commit("Third commit", &git.CommitOptions{
+		Author: author,
+		All:    true,
+	})
+	require.Nil(t, err)
+
+	thirdTagName := "v0.1.2"
+	thirdTagRef, err := cloneRepo.CreateTag(thirdTagName, secondBranchCommit,
+		&git.CreateTagOptions{
+			Tagger:  author,
+			Message: firstTagName,
+		},
+	)
 	require.Nil(t, err)
 
 	// Push the test content into the bare repo
@@ -128,7 +171,8 @@ func newTestRepo(t *testing.T) *testRepo {
 	})
 	require.Nil(t, err)
 	require.Nil(t, cloneRepo.Push(&git.PushOptions{
-		RefSpecs: []config.RefSpec{"refs/*:refs/*"},
+		RemoteName: "origin",
+		RefSpecs:   []config.RefSpec{"refs/*:refs/*"},
 	}))
 
 	require.Nil(t, os.RemoveAll(cloneTempDir))
@@ -136,15 +180,23 @@ func newTestRepo(t *testing.T) *testRepo {
 	// Provide a system under test inside the test repo
 	sut, err := CloneOrOpenRepo("", bareTempDir, false)
 	require.Nil(t, err)
+	require.Nil(t, command.NewWithWorkDir(
+		sut.Dir(), "git", "checkout", branchName,
+	).RunSuccess())
 
 	return &testRepo{
-		sut:          sut,
-		dir:          bareTempDir,
-		firstCommit:  firstCommit.String(),
-		branchCommit: branchCommit.String(),
-		branchName:   branchName,
-		tagName:      tagName,
-		tagCommit:    tagRef.Hash().String(),
+		sut:                sut,
+		dir:                bareTempDir,
+		firstCommit:        firstCommit.String(),
+		firstBranchCommit:  firstBranchCommit.String(),
+		secondBranchCommit: secondBranchCommit.String(),
+		branchName:         branchName,
+		firstTagName:       firstTagName,
+		firstTagCommit:     firstTagRef.Hash().String(),
+		secondTagName:      secondTagName,
+		secondTagCommit:    secondTagRef.Hash().String(),
+		thirdTagName:       thirdTagName,
+		thirdTagCommit:     thirdTagRef.Hash().String(),
 	}
 }
 
@@ -168,9 +220,9 @@ func TestSuccessDescribeTag(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	tag, err := testRepo.sut.DescribeTag(testRepo.tagCommit)
+	tag, err := testRepo.sut.DescribeTag(testRepo.firstTagCommit)
 	require.Nil(t, err)
-	require.Equal(t, tag, testRepo.tagName)
+	require.Equal(t, tag, testRepo.firstTagName)
 }
 
 func TestFailureDescribeTag(t *testing.T) {
@@ -186,7 +238,7 @@ func TestSuccessHasRemoteBranch(t *testing.T) {
 	defer testRepo.cleanup(t)
 
 	require.Nil(t, testRepo.sut.HasRemoteBranch(testRepo.branchName))
-	require.Nil(t, testRepo.sut.HasRemoteBranch(master))
+	require.Nil(t, testRepo.sut.HasRemoteBranch(Master))
 }
 
 func TestFailureHasRemoteBranch(t *testing.T) {
@@ -203,14 +255,14 @@ func TestSuccessHead(t *testing.T) {
 
 	head, err := testRepo.sut.Head()
 	require.Nil(t, err)
-	require.Equal(t, head, testRepo.firstCommit)
+	require.Equal(t, head, testRepo.secondBranchCommit)
 }
 
 func TestSuccessMerge(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	err := testRepo.sut.Merge(master)
+	err := testRepo.sut.Merge(Master)
 	require.Nil(t, err)
 }
 
@@ -218,7 +270,7 @@ func TestFailureMerge(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	err := testRepo.sut.Merge(testRepo.branchName)
+	err := testRepo.sut.Merge("wrong")
 	require.NotNil(t, err)
 }
 
@@ -226,7 +278,7 @@ func TestSuccessMergeBase(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	mergeBase, err := testRepo.sut.MergeBase(master, testRepo.branchName)
+	mergeBase, err := testRepo.sut.MergeBase(Master, testRepo.branchName)
 	require.Nil(t, err)
 	require.Equal(t, mergeBase, testRepo.firstCommit)
 }
@@ -235,15 +287,15 @@ func TestSuccessRevParse(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	masterRev, err := testRepo.sut.RevParse(master)
+	masterRev, err := testRepo.sut.RevParse(Master)
 	require.Nil(t, err)
 	require.Equal(t, masterRev, testRepo.firstCommit)
 
 	branchRev, err := testRepo.sut.RevParse(testRepo.branchName)
 	require.Nil(t, err)
-	require.Equal(t, branchRev, testRepo.branchCommit)
+	require.Equal(t, branchRev, testRepo.secondBranchCommit)
 
-	tagRev, err := testRepo.sut.RevParse(testRepo.tagName)
+	tagRev, err := testRepo.sut.RevParse(testRepo.firstTagName)
 	require.Nil(t, err)
 	require.Equal(t, tagRev, testRepo.firstCommit)
 }
@@ -260,15 +312,15 @@ func TestSuccessRevParseShort(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	masterRev, err := testRepo.sut.RevParseShort(master)
+	masterRev, err := testRepo.sut.RevParseShort(Master)
 	require.Nil(t, err)
 	require.Equal(t, masterRev, testRepo.firstCommit[:10])
 
 	branchRev, err := testRepo.sut.RevParseShort(testRepo.branchName)
 	require.Nil(t, err)
-	require.Equal(t, branchRev, testRepo.branchCommit[:10])
+	require.Equal(t, branchRev, testRepo.secondBranchCommit[:10])
 
-	tagRev, err := testRepo.sut.RevParseShort(testRepo.tagName)
+	tagRev, err := testRepo.sut.RevParseShort(testRepo.firstTagName)
 	require.Nil(t, err)
 	require.Equal(t, tagRev, testRepo.firstCommit[:10])
 }
@@ -285,7 +337,7 @@ func TestSuccessPush(t *testing.T) {
 	testRepo := newTestRepo(t)
 	defer testRepo.cleanup(t)
 
-	err := testRepo.sut.Push(master)
+	err := testRepo.sut.Push(Master)
 	require.Nil(t, err)
 }
 
@@ -298,8 +350,8 @@ func TestFailurePush(t *testing.T) {
 }
 
 func TestSuccessRemotify(t *testing.T) {
-	newRemote := Remotify(master)
-	require.Equal(t, newRemote, DefaultRemote+"/"+master)
+	newRemote := Remotify(Master)
+	require.Equal(t, newRemote, DefaultRemote+"/"+Master)
 }
 
 func TestSuccessIsReleaseBranch(t *testing.T) {
@@ -307,5 +359,104 @@ func TestSuccessIsReleaseBranch(t *testing.T) {
 }
 
 func TestFailureIsReleaseBranch(t *testing.T) {
-	require.False(t, IsReleaseBranch("some-branch"))
+	require.False(t, IsReleaseBranch("wrong-branch"))
+}
+
+func TestSuccessLatestTagForBranch(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	version, err := testRepo.sut.latestTagForBranch(Master)
+	require.Nil(t, err)
+	require.Equal(t, addTagPrefix(version.String()), testRepo.firstTagName)
+}
+
+func TestFailureLatestTagForBranchInvalidBranch(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	version, err := testRepo.sut.latestTagForBranch("wrong-branch")
+	require.NotNil(t, err)
+	require.Nil(t, version)
+}
+
+func TestSuccessLatestPatchToPatch(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	result, err := testRepo.sut.LatestPatchToPatch(testRepo.branchName)
+	require.Nil(t, err)
+	require.Equal(t, result.StartSHA(), testRepo.firstBranchCommit)
+	require.Equal(t, result.StartRev(), testRepo.secondTagName)
+	require.Equal(t, result.EndSHA(), testRepo.secondBranchCommit)
+	require.Equal(t, result.EndRev(), testRepo.thirdTagName)
+}
+
+func TestFailureLatestPatchToPatchWrongBranch(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	result, err := testRepo.sut.LatestPatchToPatch("wrong-branch")
+	require.NotNil(t, err)
+	require.Equal(t, DiscoverResult{}, result)
+}
+
+func TestSuccessDry(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	testRepo.sut.SetDry()
+
+	err := testRepo.sut.Push(Master)
+	require.Nil(t, err)
+}
+
+func TestSuccessLatestNonPatchFinalToLatest(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	result, err := testRepo.sut.LatestNonPatchFinalToLatest()
+	require.Nil(t, err)
+	require.Equal(t, result.StartSHA(), testRepo.firstCommit)
+	require.Equal(t, result.StartRev(), testRepo.firstTagName)
+	require.Equal(t, result.EndSHA(), testRepo.firstCommit)
+	require.Equal(t, result.EndRev(), Master)
+}
+
+func TestFailureLatestNonPatchFinalToLatestNoLatestTag(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	require.Nil(t, command.NewWithWorkDir(
+		testRepo.sut.Dir(), "git", "tag", "-d", testRepo.firstTagName,
+	).RunSuccess())
+
+	result, err := testRepo.sut.LatestNonPatchFinalToLatest()
+	require.NotNil(t, err)
+	require.Equal(t, DiscoverResult{}, result)
+}
+
+func TestSuccessLatestNonPatchFinalToMinor(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	nextMinorTag := "v0.2.0"
+	require.Nil(t, command.NewWithWorkDir(
+		testRepo.sut.Dir(), "git", "tag", nextMinorTag,
+	).RunSuccess())
+
+	result, err := testRepo.sut.LatestNonPatchFinalToMinor()
+	require.Nil(t, err)
+	require.Equal(t, result.StartSHA(), testRepo.firstCommit)
+	require.Equal(t, result.StartRev(), testRepo.firstTagName)
+	require.Equal(t, result.EndRev(), nextMinorTag)
+}
+
+func TestFailureLatestNonPatchFinalToMinor(t *testing.T) {
+	testRepo := newTestRepo(t)
+	defer testRepo.cleanup(t)
+
+	result, err := testRepo.sut.LatestNonPatchFinalToMinor()
+	require.NotNil(t, err)
+	require.Equal(t, DiscoverResult{}, result)
 }

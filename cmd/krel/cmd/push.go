@@ -17,9 +17,16 @@ limitations under the License.
 package cmd
 
 import (
-	"log"
+	"context"
+	"os"
+	"os/user"
 
+	"cloud.google.com/go/storage"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
+	"k8s.io/release/pkg/release"
 )
 
 const description = `
@@ -126,14 +133,14 @@ func init() {
 	pushBuildCmd.PersistentFlags().StringVar(
 		&pushBuildOpts.releaseKind,
 		"release-kind",
-		"devel",
-		"Specify an alternate bucket for pushes (normally 'devel' or 'ci')",
+		"kubernetes",
+		"Kind of release to push to GCS. Supported values are kubernetes (default) or federation",
 	)
 	pushBuildCmd.PersistentFlags().StringVar(
 		&pushBuildOpts.releaseType,
 		"release-type",
-		"kubernetes",
-		"Kind of release to push to GCS. Supported values are kubernetes (default) or federation",
+		"devel",
+		"Specify an alternate bucket for pushes (normally 'devel' or 'ci')",
 	)
 	pushBuildCmd.PersistentFlags().StringVar(
 		&pushBuildOpts.versionSuffix,
@@ -146,6 +153,88 @@ func init() {
 }
 
 func runPushBuild(opts *pushBuildOptions) error {
-	log.Println("unimplemented")
+	var latest string
+	releaseKind := opts.releaseKind
+
+	// Check if latest build uses bazel
+	dir, err := os.Getwd()
+	if err != nil {
+		return errors.Wrap(err, "Unable to get working directory")
+	}
+
+	isBazel, err := release.BuiltWithBazel(dir, releaseKind)
+	if err != nil {
+		return errors.Wrap(err, "Unable to identify if release built with Bazel")
+	}
+
+	if isBazel {
+		logrus.Info("Using Bazel build version")
+		version, err := release.ReadBazelVersion(dir)
+		if err != nil {
+			return errors.Wrap(err, "Unable to read Bazel build version")
+		}
+		latest = version
+	} else {
+		logrus.Info("Using Dockerized build version")
+		version, err := release.ReadDockerizedVersion(dir, releaseKind)
+		if err != nil {
+			return errors.Wrap(err, "Unable to read Dockerized build version")
+		}
+		latest = version
+	}
+
+	logrus.Infof("Found build version: %s", latest)
+
+	valid, err := release.IsValidReleaseBuild(latest)
+	if err != nil {
+		return errors.Wrap(err, "Unable to determine if release build version is valid")
+	}
+	if !valid {
+		return errors.Errorf("Build version %s is not valid for release", latest)
+	}
+
+	if opts.ci && release.IsDirtyBuild(latest) {
+		return errors.New(`Refusing to push dirty build with --ci flag given.\n
+			CI builds should always be performed from clean commits`)
+	}
+
+	if opts.versionSuffix != "" {
+		latest += "-" + opts.versionSuffix
+	}
+
+	gcsDest := opts.releaseType
+
+	// TODO: is this how we want to handle gcs dest args?
+	if opts.ci {
+		gcsDest = "ci"
+	}
+
+	gcsDest += opts.gcsSuffix
+
+	releaseBucket := opts.bucket
+	if !rootOpts.nomock {
+		u, err := user.Current()
+		if err != nil {
+			return errors.Wrap(err, "Unable to identify current user")
+		}
+
+		releaseBucket += "-" + u.Username
+	}
+
+	client, err := storage.NewClient(context.Background())
+	if err != nil {
+		return errors.Wrap(err, "error fetching gcloud credentials... try running \"gcloud auth application-default login\"")
+	}
+
+	bucket := client.Bucket(releaseBucket)
+	if bucket == nil {
+		return errors.Errorf("unable to identify specified bucket for artifacts: %s", releaseBucket)
+	}
+
+	// Check if bucket exists.
+	if _, err = bucket.Attrs(context.Background()); err != nil {
+		return errors.Wrap(err, "Unable to find release artifact bucket")
+	}
+
 	return nil
 }

@@ -55,7 +55,7 @@ func TestFailurePipeWrongArgument(t *testing.T) {
 	require.Nil(t, err)
 	require.False(t, res.Success())
 	require.Empty(t, res.Output())
-	require.Contains(t, res.Error(), "unrecognized option")
+	require.NotEmpty(t, res.Error())
 }
 
 func TestSuccessWithWorkingDir(t *testing.T) {
@@ -66,8 +66,9 @@ func TestSuccessWithWorkingDir(t *testing.T) {
 }
 
 func TestFailureWithWrongWorkingDir(t *testing.T) {
-	_, err := NewWithWorkDir("/should/not/exist", "ls", "-1").Run()
+	res, err := NewWithWorkDir("/should/not/exist", "ls", "-1").Run()
 	require.NotNil(t, err)
+	require.Nil(t, res)
 }
 
 func TestSuccessSilent(t *testing.T) {

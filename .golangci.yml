@@ -10,6 +10,7 @@ linters:
     - depguard
     - dogsled
     - dupl
+    - errcheck
     - goconst
     - gocritic
     - gocyclo
@@ -34,7 +35,6 @@ linters:
     - unused
     - varcheck
     - whitespace
-    # - errcheck
     # - funlen
     # - gochecknoglobals
     # - gochecknoinits
