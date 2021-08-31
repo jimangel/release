@@ -33,11 +33,11 @@ require (
 	github.com/yuin/goldmark v1.4.0
 	golang.org/x/mod v0.5.0
 	golang.org/x/net v0.0.0-20210525063256-abc453219eb5
-	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
+	golang.org/x/oauth2 v0.0.0-20210819190943-2bc19b11175f
 	golang.org/x/tools v0.1.5
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
-	google.golang.org/api v0.54.0
-	google.golang.org/genproto v0.0.0-20210813162853-db860fec028c
+	google.golang.org/api v0.55.0
+	google.golang.org/genproto v0.0.0-20210828152312-66f60bf46e71
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/utils v0.0.0-20210305010621-2afb4311ab10
 	sigs.k8s.io/k8s-container-image-promoter v1.337.0
@@ -49,7 +49,8 @@ require (
 )
 
 require (
-	cloud.google.com/go v0.92.1 // indirect
+	cloud.google.com/go v0.93.3 // indirect
+	cloud.google.com/go/grafeas v0.1.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
 	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/Microsoft/go-winio v0.5.0 // indirect
@@ -77,7 +78,7 @@ require (
 	github.com/google/go-cmp v0.5.6 // indirect
 	github.com/google/go-github/v33 v33.0.0 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
-	github.com/googleapis/gax-go/v2 v2.0.5 // indirect
+	github.com/googleapis/gax-go/v2 v2.1.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.1 // indirect
 	github.com/hashicorp/go-multierror v1.0.0 // indirect
@@ -105,11 +106,11 @@ require (
 	go.opencensus.io v0.23.0 // indirect
 	golang.org/x/crypto v0.0.0-20210421170649-83a5a9bb288b // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
-	golang.org/x/sys v0.0.0-20210806184541-e5e7981a1069 // indirect
+	golang.org/x/sys v0.0.0-20210823070655-63515b42dcdf // indirect
 	golang.org/x/text v0.3.6 // indirect
 	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/grpc v1.39.1 // indirect
+	google.golang.org/grpc v1.40.0 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
 	gopkg.in/src-d/go-billy.v4 v4.3.2 // indirect
 	gopkg.in/src-d/go-git.v4 v4.13.1 // indirect
