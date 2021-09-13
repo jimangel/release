@@ -40,7 +40,7 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	sigs.k8s.io/k8s-container-image-promoter v1.339.0
 	sigs.k8s.io/mdtoc v1.0.1
-	sigs.k8s.io/release-sdk v0.1.0
+	sigs.k8s.io/release-sdk v0.2.0
 	sigs.k8s.io/release-utils v0.3.0
 	sigs.k8s.io/yaml v1.2.0
 	sigs.k8s.io/zeitgeist v0.3.0
