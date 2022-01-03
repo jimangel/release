@@ -30,7 +30,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/yuin/goldmark v1.4.4
 	golang.org/x/net v0.0.0-20211216030914-fe4d6282115f
-	google.golang.org/api v0.62.0
+	google.golang.org/api v0.63.0
 	gopkg.in/yaml.v2 v2.4.0
 	sigs.k8s.io/bom v0.1.1-0.20211228172218-5dc67098b61b
 	sigs.k8s.io/mdtoc v1.1.0
