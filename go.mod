@@ -1,6 +1,7 @@
 module k8s.io/release
 
 go 1.21
+toolchain go1.22.2
 
 require (
 	cloud.google.com/go/storage v1.39.1
@@ -38,7 +39,7 @@ require (
 	golang.org/x/text v0.14.0
 	google.golang.org/api v0.172.0
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/apimachinery v0.29.3
+	k8s.io/apimachinery v0.30.0
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
 	sigs.k8s.io/bom v0.6.0
 	sigs.k8s.io/mdtoc v1.3.0
@@ -296,7 +297,7 @@ require (
 	k8s.io/api v0.28.4 // indirect
 	k8s.io/client-go v0.28.4 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
-	k8s.io/kube-openapi v0.0.0-20231010175941-2dd684a91f00 // indirect
+	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340 // indirect
 	modernc.org/libc v1.37.6 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.7.2 // indirect
