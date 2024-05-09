@@ -79,15 +79,16 @@ const patchReleaseExpectedContent = `# v1.25.3
 - github.com/rogpeppe/go-internal: [v1.3.0 → v1.6.1](https://github.com/rogpeppe/go-internal/compare/v1.3.0...v1.6.1)
 - github.com/stretchr/objx: [v0.2.0 → v0.4.0](https://github.com/stretchr/objx/compare/v0.2.0...v0.4.0)
 - github.com/stretchr/testify: [v1.7.0 → v1.8.0](https://github.com/stretchr/testify/compare/v1.7.0...v1.8.0)
-- github.com/vmware/govmomi: [v0.20.3 → v0.30.0](https://github.com/vmware/govmomi/compare/v0.20.3...v0.30.0)
+- github.com/vmware/govmomi: [v0.20.3 → v0.30.6](https://github.com/vmware/govmomi/compare/v0.20.3...v0.30.6)
 - go.uber.org/goleak: v1.1.10 → v1.2.0
+- golang.org/x/crypto: 3147a52 → v0.14.0
 - golang.org/x/lint: 6edffad → 1621716
 - golang.org/x/mod: 86c51ed → v0.8.0
-- golang.org/x/net: a158d28 → v0.8.0
+- golang.org/x/net: a158d28 → v0.17.0
 - golang.org/x/sync: 886fb93 → v0.1.0
-- golang.org/x/sys: 8c9f86f → v0.6.0
-- golang.org/x/term: 03fcf44 → v0.6.0
-- golang.org/x/text: v0.3.7 → v0.8.0
+- golang.org/x/sys: 8c9f86f → v0.13.0
+- golang.org/x/term: 03fcf44 → v0.13.0
+- golang.org/x/text: v0.3.7 → v0.13.0
 - golang.org/x/tools: v0.1.12 → v0.6.0
 - k8s.io/system-validators: v1.7.0 → v1.8.0
 - sigs.k8s.io/apiserver-network-proxy/konnectivity-client: v0.0.32 → v0.0.37
@@ -162,15 +163,16 @@ const patchReleaseExpectedHTML = `<!DOCTYPE html>
 <li>github.com/rogpeppe/go-internal: <a href="https://github.com/rogpeppe/go-internal/compare/v1.3.0...v1.6.1">v1.3.0 → v1.6.1</a></li>
 <li>github.com/stretchr/objx: <a href="https://github.com/stretchr/objx/compare/v0.2.0...v0.4.0">v0.2.0 → v0.4.0</a></li>
 <li>github.com/stretchr/testify: <a href="https://github.com/stretchr/testify/compare/v1.7.0...v1.8.0">v1.7.0 → v1.8.0</a></li>
-<li>github.com/vmware/govmomi: <a href="https://github.com/vmware/govmomi/compare/v0.20.3...v0.30.0">v0.20.3 → v0.30.0</a></li>
+<li>github.com/vmware/govmomi: <a href="https://github.com/vmware/govmomi/compare/v0.20.3...v0.30.6">v0.20.3 → v0.30.6</a></li>
 <li>go.uber.org/goleak: v1.1.10 → v1.2.0</li>
+<li>golang.org/x/crypto: 3147a52 → v0.14.0</li>
 <li>golang.org/x/lint: 6edffad → 1621716</li>
 <li>golang.org/x/mod: 86c51ed → v0.8.0</li>
-<li>golang.org/x/net: a158d28 → v0.8.0</li>
+<li>golang.org/x/net: a158d28 → v0.17.0</li>
 <li>golang.org/x/sync: 886fb93 → v0.1.0</li>
-<li>golang.org/x/sys: 8c9f86f → v0.6.0</li>
-<li>golang.org/x/term: 03fcf44 → v0.6.0</li>
-<li>golang.org/x/text: v0.3.7 → v0.8.0</li>
+<li>golang.org/x/sys: 8c9f86f → v0.13.0</li>
+<li>golang.org/x/term: 03fcf44 → v0.13.0</li>
+<li>golang.org/x/text: v0.3.7 → v0.13.0</li>
 <li>golang.org/x/tools: v0.1.12 → v0.6.0</li>
 <li>k8s.io/system-validators: v1.7.0 → v1.8.0</li>
 <li>sigs.k8s.io/apiserver-network-proxy/konnectivity-client: v0.0.32 → v0.0.37</li>

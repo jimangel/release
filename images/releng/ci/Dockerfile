@@ -32,8 +32,8 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # install goreleaser
-ARG GORELEASER_VERSION=v1.19.2
-ARG GORELEASER_SHA=27c7397b816c43098f88cbccc5aeec3df929fb857f28b2cb8e885d09458ada1e
+ARG GORELEASER_VERSION=v1.25.1
+ARG GORELEASER_SHA=8156fef4026559881de6ba65a3882c5a52a4e5a981e0b316ea051cd617f61cbf
 RUN  \
     GORELEASER_DOWNLOAD_FILE=goreleaser_Linux_x86_64.tar.gz && \
     GORELEASER_DOWNLOAD_URL=https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/${GORELEASER_DOWNLOAD_FILE} && \
@@ -44,8 +44,8 @@ RUN  \
     goreleaser -v
 
 # install ko
-ARG KO_VERSION=v0.14.1
-ARG KO_SHA=3f8f8e3fb4b78a4dfc0708df2b58f202c595a66c34195786f9a279ea991f4eae
+ARG KO_VERSION=v0.15.2
+ARG KO_SHA=d11f03f23261d16f9e7802291e9d098e84f5daecc7931e8573bece9025b6a2c5
 RUN  \
     KO_DOWNLOAD_FILE=ko_${KO_VERSION#v}_Linux_x86_64.tar.gz && \
     KO_DOWNLOAD_URL=https://github.com/ko-build/ko/releases/download/${KO_VERSION}/${KO_DOWNLOAD_FILE} && \

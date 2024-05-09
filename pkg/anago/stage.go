@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/blang/semver/v4"
+	gogit "github.com/go-git/go-git/v5"
 	intoto "github.com/in-toto/in-toto-golang/in_toto"
 	slsa "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	"github.com/sirupsen/logrus"
@@ -31,7 +32,6 @@ import (
 	"k8s.io/release/pkg/build"
 	"k8s.io/release/pkg/changelog"
 	"k8s.io/release/pkg/gcp/gcb"
-	"k8s.io/release/pkg/packages"
 	"k8s.io/release/pkg/release"
 	"sigs.k8s.io/bom/pkg/provenance"
 	"sigs.k8s.io/bom/pkg/spdx"
@@ -82,9 +82,6 @@ type stageClient interface {
 	// Build runs 'make cross-in-a-container' by using the latest kubecross
 	// container image. This step also build all necessary release tarballs.
 	Build() error
-
-	// BuildPackages builds deb and rmp packages.
-	BuildPackages() error
 
 	// GenerateChangelog builds the CHANGELOG-x.y.md file and commits it
 	// into the local repository.
@@ -157,7 +154,6 @@ type stageImpl interface {
 	CheckReleaseBucket(options *build.Options) error
 	DockerHubLogin() error
 	MakeCross(version string) error
-	BuildPackages(version string) error
 	GenerateChangelog(options *changelog.Options) error
 	StageLocalSourceTree(
 		options *build.Options, workDir, buildVersion string,
@@ -253,10 +249,6 @@ func (d *defaultStageImpl) Merge(repo *git.Repo, rev string) error {
 
 func (d *defaultStageImpl) MakeCross(version string) error {
 	return build.NewMake().MakeCross(version)
-}
-
-func (d *defaultStageImpl) BuildPackages(version string) error {
-	return packages.New(version).Build()
 }
 
 func (d *defaultStageImpl) DockerHubLogin() error {
@@ -503,7 +495,7 @@ func (d *DefaultStage) TagRepository() error {
 			logrus.Infof("Creating empty release commit for tag %s", version)
 			if err := d.impl.CommitEmpty(
 				repo,
-				fmt.Sprintf("Release commit for Kubernetes %s", version),
+				"Release commit for Kubernetes "+version,
 			); err != nil {
 				return fmt.Errorf("create empty release commit: %w", err)
 			}
@@ -573,16 +565,6 @@ func (d *DefaultStage) Build() error {
 	return nil
 }
 
-// BuildPackages builds deb and rmp packages.
-func (d *DefaultStage) BuildPackages() error {
-	for _, version := range d.state.versions.Ordered() {
-		if err := d.impl.BuildPackages(version); err != nil {
-			return fmt.Errorf("build version %s: %w", version, err)
-		}
-	}
-	return nil
-}
-
 // VerifyArtifacts checks the artifacts to ensure they are correct
 func (d *DefaultStage) VerifyArtifacts() error {
 	return d.impl.VerifyArtifacts(d.state.versions.Ordered())
@@ -599,8 +581,9 @@ func (d *DefaultStage) GenerateChangelog() error {
 				"cloning fresh default repository for changelog",
 		)
 
+		opts := &gogit.CloneOptions{}
 		repo, err := git.CleanCloneGitHubRepo(
-			release.DefaultK8sOrg, release.DefaultK8sRepo, false,
+			release.DefaultK8sOrg, release.DefaultK8sRepo, false, true, opts,
 		)
 		if err != nil {
 			return fmt.Errorf("clone k/k repo: %w", err)
@@ -658,7 +641,7 @@ func (d *defaultStageImpl) AddBinariesToSBOM(sbom *spdx.Document, version string
 		file.AddRelationship(&spdx.Relationship{
 			FullRender:       false,
 			PeerReference:    "SPDXRef-Package-kubernetes",
-			PeerExtReference: fmt.Sprintf("kubernetes-%s", version),
+			PeerExtReference: "kubernetes-" + version,
 			Comment:          "Source code",
 			Type:             spdx.GENERATED_FROM,
 		})
@@ -688,7 +671,7 @@ func (d *defaultStageImpl) AddTarfilesToSBOM(sbom *spdx.Document, version string
 		file.AddRelationship(&spdx.Relationship{
 			FullRender:       false,
 			PeerReference:    "SPDXRef-Package-kubernetes",
-			PeerExtReference: fmt.Sprintf("kubernetes-%s", version),
+			PeerExtReference: "kubernetes-" + version,
 			Comment:          "Source code",
 			Type:             spdx.GENERATED_FROM,
 		})
@@ -710,7 +693,7 @@ func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
 	// Build the base artifacts sbom. We only pass it the images for
 	// now as the binaries and tarballs need more processing
 	doc, err := d.BuildBaseArtifactsSBOM(&spdx.DocGenerateOptions{
-		Name:           fmt.Sprintf("Kubernetes Release %s", version),
+		Name:           "Kubernetes Release " + version,
 		AnalyseLayers:  false,
 		OnlyDirectDeps: false,
 		License:        LicenseIdentifier,
@@ -733,7 +716,7 @@ func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
 
 	// Reference the source code SBOM as external document
 	extRef := spdx.ExternalDocumentRef{
-		ID:  fmt.Sprintf("kubernetes-%s", version),
+		ID:  "kubernetes-" + version,
 		URI: fmt.Sprintf("https://sbom.k8s.io/%s/source", version),
 	}
 	if err := extRef.ReadSourceFile(
@@ -748,7 +731,7 @@ func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
 		pkg.AddRelationship(&spdx.Relationship{
 			FullRender:       false,
 			PeerReference:    "SPDXRef-Package-kubernetes",
-			PeerExtReference: fmt.Sprintf("kubernetes-%s", version),
+			PeerExtReference: "kubernetes-" + version,
 			Comment:          "Source code",
 			Type:             spdx.GENERATED_FROM,
 		})
@@ -778,7 +761,7 @@ func (d *defaultStageImpl) WriteSourceBOM(
 	spdxDoc *spdx.Document, version string,
 ) error {
 	spdxDoc.Namespace = fmt.Sprintf("https://sbom.k8s.io/%s/source", version)
-	spdxDoc.Name = fmt.Sprintf("kubernetes-%s", version)
+	spdxDoc.Name = "kubernetes-" + version
 	if err := spdxDoc.Write(filepath.Join(os.TempDir(), fmt.Sprintf("source-bom-%s.spdx", version))); err != nil {
 		return fmt.Errorf("writing the source code SBOM: %w", err)
 	}

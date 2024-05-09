@@ -170,6 +170,7 @@ func TestGenerateReleaseVersionStage(t *testing.T) {
 			shouldError: true,
 		},
 	} {
+		tc := tc
 		opts := anago.DefaultStageOptions()
 		sut := anago.NewDefaultStage(opts)
 
@@ -425,42 +426,6 @@ func TestBuild(t *testing.T) {
 		sut.SetImpl(mock)
 
 		err := sut.Build()
-		if tc.shouldError {
-			require.NotNil(t, err)
-		} else {
-			require.Nil(t, err)
-		}
-	}
-}
-
-func TestBuildPackages(t *testing.T) {
-	for _, tc := range []struct {
-		prepare     func(*anagofakes.FakeStageImpl)
-		shouldError bool
-	}{
-		{ // success
-			prepare:     func(*anagofakes.FakeStageImpl) {},
-			shouldError: false,
-		},
-		{ // BuildPackages fails
-			prepare: func(mock *anagofakes.FakeStageImpl) {
-				mock.BuildPackagesReturns(err)
-			},
-			shouldError: true,
-		},
-	} {
-		opts := anago.DefaultStageOptions()
-		sut := anago.NewDefaultStage(opts)
-
-		sut.SetState(
-			generateTestingStageState(&testStateParameters{versionsTag: &testVersionTag}),
-		)
-
-		mock := &anagofakes.FakeStageImpl{}
-		tc.prepare(mock)
-		sut.SetImpl(mock)
-
-		err := sut.BuildPackages()
 		if tc.shouldError {
 			require.NotNil(t, err)
 		} else {

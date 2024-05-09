@@ -25,9 +25,9 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"k8s.io/release/pkg/announce"
+	"k8s.io/release/pkg/announce/github"
 	"k8s.io/release/pkg/build"
 	"k8s.io/release/pkg/gcp/gcb"
-	"k8s.io/release/pkg/packages"
 	"k8s.io/release/pkg/release"
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/object"
@@ -81,9 +81,6 @@ type releaseClient interface {
 	// PushGitObjects pushes the new tags and branches to the repository remote
 	// on GitHub.
 	PushGitObjects() error
-
-	// ReleasePackages pushes the deb and rpm packages to their final destination.
-	ReleasePackages() error
 
 	// CreateAnnouncement creates the release announcement mail and update the
 	// GitHub release page to contain the artifacts and their checksums.
@@ -148,11 +145,10 @@ type releaseImpl interface {
 		versionMarkers []string,
 		privateBucket, fast bool,
 	) error
-	ReleasePackages(string) error
 	CreateAnnouncement(
 		options *announce.Options,
 	) error
-	UpdateGitHubPage(options *announce.GitHubPageOptions) error
+	UpdateGitHubPage(options *github.Options) error
 	PushTags(pusher *release.GitObjectPusher, tagList []string) error
 	PushBranches(pusher *release.GitObjectPusher, branchList []string) error
 	PushMainBranch(pusher *release.GitObjectPusher) error
@@ -226,9 +222,9 @@ func (d *defaultReleaseImpl) ValidateImages(
 }
 
 func (d *defaultReleaseImpl) PublishVersion(
-	buildType, version, buildDir, bucket, gcsRoot string, //nolint: revive,gocritic
-	versionMarkers []string, //nolint: revive,gocritic
-	privateBucket, fast bool, //nolint: revive,gocritic
+	buildType, version, buildDir, bucket, gcsRoot string, //nolint: gocritic
+	versionMarkers []string, //nolint: gocritic
+	privateBucket, fast bool, //nolint: gocritic
 ) error {
 	return release.
 		NewPublisher().
@@ -263,13 +259,9 @@ func (d *DefaultRelease) InitLogFile() error {
 	return nil
 }
 
-func (d *defaultReleaseImpl) ReleasePackages(version string) error {
-	return packages.New(version).Release()
-}
-
 func (d *defaultReleaseImpl) CreateAnnouncement(options *announce.Options) error {
 	// Create the announcement
-	return announce.CreateForRelease(options)
+	return announce.NewAnnounce(options).CreateForRelease()
 }
 
 func (d *defaultReleaseImpl) ArchiveRelease(options *release.ArchiverOptions) error {
@@ -277,8 +269,8 @@ func (d *defaultReleaseImpl) ArchiveRelease(options *release.ArchiverOptions) er
 	return release.NewArchiver(options).ArchiveRelease()
 }
 
-func (d *defaultReleaseImpl) UpdateGitHubPage(options *announce.GitHubPageOptions) error {
-	return announce.UpdateGitHubPage(options)
+func (d *defaultReleaseImpl) UpdateGitHubPage(options *github.Options) error {
+	return github.NewGitHub(options).UpdateGitHubPage()
 }
 
 func (d *defaultReleaseImpl) PushTags(
@@ -525,25 +517,6 @@ func (d *DefaultRelease) PushGitObjects() error {
 	return nil
 }
 
-// ReleasePackages pushes the deb and rpm packages to their final destination.
-func (d *DefaultRelease) ReleasePackages() error {
-	if !d.options.NoMock {
-		logrus.Info("Will not create any packages because we're running in mock mode")
-		return nil
-	}
-	version := d.state.versions.Official()
-	if version == "" {
-		logrus.Info("Will not create any packages for non-official releases")
-		return nil
-	}
-
-	if err := d.impl.ReleasePackages(version); err != nil {
-		return fmt.Errorf("release version %s: %w", version, err)
-	}
-
-	return nil
-}
-
 // CreateAnnouncement creates the announcement.html file
 func (d *DefaultRelease) CreateAnnouncement() error {
 	// Build the announcement options set
@@ -574,9 +547,9 @@ func (d *DefaultRelease) CreateAnnouncement() error {
 		return fmt.Errorf("creating the announcement: %w", err)
 	}
 
-	// Check if we are releasing is the initial minor (eg 1.20.0),
+	// Check if we are releasing the initial rc release (eg 1.20.0-rc.0),
 	// and we are working on a release-M.m branch
-	if primeSemver.Patch == 0 && len(primeSemver.Pre) == 0 &&
+	if primeSemver.Patch == 0 && d.options.ReleaseType == release.ReleaseTypeRC &&
 		d.options.ReleaseBranch != git.DefaultBranch {
 		if d.options.NoMock {
 			// Create the publishing bot issue
@@ -604,7 +577,7 @@ func (d *DefaultRelease) UpdateGitHubPage() error {
 	)
 
 	// Build the options set for the GitHub page
-	ghPageOpts := &announce.GitHubPageOptions{
+	ghPageOpts := &github.Options{
 		Tag:                   d.state.versions.Prime(),
 		NoMock:                d.options.NoMock,
 		UpdateIfReleaseExists: true,

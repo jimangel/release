@@ -27,6 +27,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/release/pkg/consts"
 
 	"sigs.k8s.io/release-sdk/sign"
 	"sigs.k8s.io/release-utils/command"
@@ -298,14 +299,18 @@ func (i *Images) Validate(registry, version, buildPath string) error {
 // existence of a local build directory. Used in CI builds to quickly validate
 // if a build is actually required.
 func (i *Images) Exists(registry, version string, fast bool) (bool, error) {
+	if registry == "" {
+		logrus.Info("no image registry was supplied, assuming no images are being pushed")
+		return true, nil
+	}
 	logrus.Infof("Validating image manifests in %s", registry)
 	version = i.normalizeVersion(version)
 
 	manifestImages := ManifestImages
 
-	arches := SupportedArchitectures
+	arches := consts.SupportedArchitectures
 	if fast {
-		arches = FastArchitectures
+		arches = consts.FastArchitectures
 	}
 
 	for _, image := range manifestImages {

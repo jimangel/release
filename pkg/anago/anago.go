@@ -219,7 +219,7 @@ func (s *StageOptions) Validate(state *State) error {
 	// validate it.
 	if s.Options.BuildVersion != "" {
 		if err := s.Options.ValidateBuildVersion(state); err != nil {
-			return fmt.Errorf("validating build version")
+			return errors.New("validating build version")
 		}
 	}
 
@@ -296,11 +296,6 @@ func (s *Stage) Run() error {
 	logger.WithStep().Info("Building release")
 	if err := s.client.Build(); err != nil {
 		return fmt.Errorf("build release: %w", err)
-	}
-
-	logger.WithStep().Info("Building packages")
-	if err := s.client.BuildPackages(); err != nil {
-		return fmt.Errorf("build packages: %w", err)
 	}
 
 	logger.WithStep().Info("Generating changelog")
@@ -443,11 +438,6 @@ func (r *Release) Run() error {
 	logger.WithStep().Info("Pushing git objects")
 	if err := r.client.PushGitObjects(); err != nil {
 		return fmt.Errorf("push git objects: %w", err)
-	}
-
-	logger.WithStep().Info("Releasing packages")
-	if err := r.client.ReleasePackages(); err != nil {
-		return fmt.Errorf("release packages: %w", err)
 	}
 
 	logger.WithStep().Info("Creating announcement")

@@ -25,8 +25,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/release/pkg/notes/options"
 
 	kgithub "sigs.k8s.io/release-sdk/github"
+)
+
+const (
+	mdSep            = "```"
+	docsBlock        = mdSep + "docs"
+	releaseNoteBlock = mdSep + "release-note"
 )
 
 func githubClient(t *testing.T) (kgithub.Client, context.Context) {
@@ -91,7 +98,7 @@ func TestDocumentationFromString(t *testing.T) {
 	)
 	// multi line without prefix
 	result := DocumentationFromString(
-		fmt.Sprintf("```docs\r\n%s%s\r\n%s%s\r\n```",
+		fmt.Sprintf(docsBlock+"\r\n%s%s\r\n%s%s\r\n"+mdSep,
 			description1, url1,
 			description2, url2,
 		),
@@ -104,7 +111,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// multi line without carriage return
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\n%s%s\n%s%s\n```",
+		fmt.Sprintf(docsBlock+"\n%s%s\n%s%s\n"+mdSep,
 			description1, url1,
 			description2, url2,
 		),
@@ -119,7 +126,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// multi line with prefixes
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\r\n - %s%s\r\n * %s%s\r\n```",
+		fmt.Sprintf(docsBlock+"\r\n - %s%s\r\n * %s%s\r\n"+mdSep,
 			description1, url1,
 			description2, url2,
 		),
@@ -134,7 +141,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// single line without star/dash prefix
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\r\n%s%s\r\n```", description1, url1),
+		fmt.Sprintf(docsBlock+"\r\n%s%s\r\n"+mdSep, description1, url1),
 	)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, expectedDescription1, result[0].Description)
@@ -142,7 +149,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// single line with star prefix
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\r\n * %s%s\r\n```", description1, url1),
+		fmt.Sprintf(docsBlock+"\r\n * %s%s\r\n"+mdSep, description1, url1),
 	)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, expectedDescription1, result[0].Description)
@@ -150,7 +157,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// single line with dash prefix
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\r\n - %s%s\r\n```", description1, url1),
+		fmt.Sprintf(docsBlock+"\r\n - %s%s\r\n"+mdSep, description1, url1),
 	)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, expectedDescription1, result[0].Description)
@@ -158,7 +165,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// single line without carriage return
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\n%s%s\n```", description1, url1),
+		fmt.Sprintf(docsBlock+"\n%s%s\n"+mdSep, description1, url1),
 	)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, expectedDescription1, result[0].Description)
@@ -166,7 +173,7 @@ func TestDocumentationFromString(t *testing.T) {
 
 	// single line with empty description
 	result = DocumentationFromString(
-		fmt.Sprintf("```docs\n%s\n```", url1),
+		fmt.Sprintf(docsBlock+"\n%s\n"+mdSep, url1),
 	)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, "", result[0].Description)
@@ -244,7 +251,7 @@ func TestPrettySIG(t *testing.T) {
 
 func TestNoteTextFromString(t *testing.T) {
 	noteBlock := func(note string) string {
-		return "```release-note\n" + note + "\n```"
+		return releaseNoteBlock + "\n" + note + "\n" + mdSep
 	}
 	for _, tc := range []struct {
 		input  string
@@ -304,19 +311,19 @@ func TestMatchesExcludeFilter(t *testing.T) {
 			shouldExclude: false,
 		},
 		{
-			input:         "```release-note\nnone\n```",
+			input:         releaseNoteBlock + "\nnone\n" + mdSep,
 			shouldExclude: true,
 		},
 		{
-			input:         "```release-note\nn/a\n```",
+			input:         releaseNoteBlock + "\nn/a\n" + mdSep,
 			shouldExclude: true,
 		},
 		{
-			input:         "```release-note\nNA\n```",
+			input:         releaseNoteBlock + "\nNA\n" + mdSep,
 			shouldExclude: true,
 		},
 		{
-			input:         "```release-note\nthis none should\n```",
+			input:         releaseNoteBlock + "\nthis none should\n" + mdSep,
 			shouldExclude: false,
 		},
 		{
@@ -330,14 +337,14 @@ xref: #81126
 xref: #81152
 xref: https://github.com/kubernetes/website/pull/19630
 
-` + "```" + `release-note
+` + mdSep + `release-note
 Action Required: Support for basic authentication via the --basic-auth-file flag has been removed.  Users should migrate to --token-auth-file for similar functionality.
-` + "```" + `
+` + mdSep + `
 
-` + "```" + `docs
+` + mdSep + `docs
 Removed "Static Password File" section from https://kubernetes.io/docs/reference/access-authn-authz/authentication/#static-password-file
 https://github.com/kubernetes/website/pull/19630
-` + "```",
+` + mdSep,
 			shouldExclude: false,
 		},
 	} {
@@ -494,5 +501,61 @@ func TestCapitalizeString(t *testing.T) {
 	} {
 		result := capitalizeString(tc.input)
 		require.Equal(t, tc.expected, result)
+	}
+}
+
+func TestReleaseNoteForPullRequest(t *testing.T) {
+	g, err := NewGatherer(context.Background(), &options.Options{
+		GithubBaseURL: kgithub.GitHubURL,
+		GithubOrg:     DefaultOrg,
+		GithubRepo:    "release",
+	})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name         string
+		prNr         int
+		expectedNote string
+		notPublish   bool
+		shouldErr    bool
+	}{
+		{
+			name:         "Normal Release Note",
+			prNr:         3378,
+			expectedNote: "Fixed wrong amount of logger steps for `krel obs`.",
+			notPublish:   false,
+			shouldErr:    false,
+		},
+		{
+			name:         "tagged release-note-none",
+			prNr:         3398,
+			expectedNote: "",
+			notPublish:   true,
+			shouldErr:    false,
+		},
+		{
+			name:       "NONE release note",
+			prNr:       3401,
+			notPublish: true,
+			shouldErr:  false,
+		},
+		{
+			name:      "Not a PR",
+			prNr:      3403,
+			shouldErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			note, err := g.ReleaseNoteForPullRequest(tc.prNr)
+			if tc.shouldErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, note)
+			if tc.notPublish {
+				require.True(t, note.DoNotPublish)
+			}
+			require.Equal(t, tc.expectedNote, note.Markdown)
+		})
 	}
 }

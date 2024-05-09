@@ -22,6 +22,7 @@ import (
 
 	semver "github.com/blang/semver/v4"
 	"k8s.io/release/pkg/announce"
+	"k8s.io/release/pkg/announce/github"
 	"k8s.io/release/pkg/build"
 	"k8s.io/release/pkg/gcp/gcb"
 	"k8s.io/release/pkg/release"
@@ -258,17 +259,6 @@ type FakeReleaseImpl struct {
 	pushTagsReturnsOnCall map[int]struct {
 		result1 error
 	}
-	ReleasePackagesStub        func(string) error
-	releasePackagesMutex       sync.RWMutex
-	releasePackagesArgsForCall []struct {
-		arg1 string
-	}
-	releasePackagesReturns struct {
-		result1 error
-	}
-	releasePackagesReturnsOnCall map[int]struct {
-		result1 error
-	}
 	SubmitStub        func(*gcb.Options) error
 	submitMutex       sync.RWMutex
 	submitArgsForCall []struct {
@@ -291,10 +281,10 @@ type FakeReleaseImpl struct {
 	toFileReturnsOnCall map[int]struct {
 		result1 error
 	}
-	UpdateGitHubPageStub        func(*announce.GitHubPageOptions) error
+	UpdateGitHubPageStub        func(*github.Options) error
 	updateGitHubPageMutex       sync.RWMutex
 	updateGitHubPageArgsForCall []struct {
-		arg1 *announce.GitHubPageOptions
+		arg1 *github.Options
 	}
 	updateGitHubPageReturns struct {
 		result1 error
@@ -1460,67 +1450,6 @@ func (fake *FakeReleaseImpl) PushTagsReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *FakeReleaseImpl) ReleasePackages(arg1 string) error {
-	fake.releasePackagesMutex.Lock()
-	ret, specificReturn := fake.releasePackagesReturnsOnCall[len(fake.releasePackagesArgsForCall)]
-	fake.releasePackagesArgsForCall = append(fake.releasePackagesArgsForCall, struct {
-		arg1 string
-	}{arg1})
-	stub := fake.ReleasePackagesStub
-	fakeReturns := fake.releasePackagesReturns
-	fake.recordInvocation("ReleasePackages", []interface{}{arg1})
-	fake.releasePackagesMutex.Unlock()
-	if stub != nil {
-		return stub(arg1)
-	}
-	if specificReturn {
-		return ret.result1
-	}
-	return fakeReturns.result1
-}
-
-func (fake *FakeReleaseImpl) ReleasePackagesCallCount() int {
-	fake.releasePackagesMutex.RLock()
-	defer fake.releasePackagesMutex.RUnlock()
-	return len(fake.releasePackagesArgsForCall)
-}
-
-func (fake *FakeReleaseImpl) ReleasePackagesCalls(stub func(string) error) {
-	fake.releasePackagesMutex.Lock()
-	defer fake.releasePackagesMutex.Unlock()
-	fake.ReleasePackagesStub = stub
-}
-
-func (fake *FakeReleaseImpl) ReleasePackagesArgsForCall(i int) string {
-	fake.releasePackagesMutex.RLock()
-	defer fake.releasePackagesMutex.RUnlock()
-	argsForCall := fake.releasePackagesArgsForCall[i]
-	return argsForCall.arg1
-}
-
-func (fake *FakeReleaseImpl) ReleasePackagesReturns(result1 error) {
-	fake.releasePackagesMutex.Lock()
-	defer fake.releasePackagesMutex.Unlock()
-	fake.ReleasePackagesStub = nil
-	fake.releasePackagesReturns = struct {
-		result1 error
-	}{result1}
-}
-
-func (fake *FakeReleaseImpl) ReleasePackagesReturnsOnCall(i int, result1 error) {
-	fake.releasePackagesMutex.Lock()
-	defer fake.releasePackagesMutex.Unlock()
-	fake.ReleasePackagesStub = nil
-	if fake.releasePackagesReturnsOnCall == nil {
-		fake.releasePackagesReturnsOnCall = make(map[int]struct {
-			result1 error
-		})
-	}
-	fake.releasePackagesReturnsOnCall[i] = struct {
-		result1 error
-	}{result1}
-}
-
 func (fake *FakeReleaseImpl) Submit(arg1 *gcb.Options) error {
 	fake.submitMutex.Lock()
 	ret, specificReturn := fake.submitReturnsOnCall[len(fake.submitArgsForCall)]
@@ -1643,11 +1572,11 @@ func (fake *FakeReleaseImpl) ToFileReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *FakeReleaseImpl) UpdateGitHubPage(arg1 *announce.GitHubPageOptions) error {
+func (fake *FakeReleaseImpl) UpdateGitHubPage(arg1 *github.Options) error {
 	fake.updateGitHubPageMutex.Lock()
 	ret, specificReturn := fake.updateGitHubPageReturnsOnCall[len(fake.updateGitHubPageArgsForCall)]
 	fake.updateGitHubPageArgsForCall = append(fake.updateGitHubPageArgsForCall, struct {
-		arg1 *announce.GitHubPageOptions
+		arg1 *github.Options
 	}{arg1})
 	stub := fake.UpdateGitHubPageStub
 	fakeReturns := fake.updateGitHubPageReturns
@@ -1668,13 +1597,13 @@ func (fake *FakeReleaseImpl) UpdateGitHubPageCallCount() int {
 	return len(fake.updateGitHubPageArgsForCall)
 }
 
-func (fake *FakeReleaseImpl) UpdateGitHubPageCalls(stub func(*announce.GitHubPageOptions) error) {
+func (fake *FakeReleaseImpl) UpdateGitHubPageCalls(stub func(*github.Options) error) {
 	fake.updateGitHubPageMutex.Lock()
 	defer fake.updateGitHubPageMutex.Unlock()
 	fake.UpdateGitHubPageStub = stub
 }
 
-func (fake *FakeReleaseImpl) UpdateGitHubPageArgsForCall(i int) *announce.GitHubPageOptions {
+func (fake *FakeReleaseImpl) UpdateGitHubPageArgsForCall(i int) *github.Options {
 	fake.updateGitHubPageMutex.RLock()
 	defer fake.updateGitHubPageMutex.RUnlock()
 	argsForCall := fake.updateGitHubPageArgsForCall[i]
@@ -1806,8 +1735,6 @@ func (fake *FakeReleaseImpl) Invocations() map[string][][]interface{} {
 	defer fake.pushMainBranchMutex.RUnlock()
 	fake.pushTagsMutex.RLock()
 	defer fake.pushTagsMutex.RUnlock()
-	fake.releasePackagesMutex.RLock()
-	defer fake.releasePackagesMutex.RUnlock()
 	fake.submitMutex.RLock()
 	defer fake.submitMutex.RUnlock()
 	fake.toFileMutex.RLock()

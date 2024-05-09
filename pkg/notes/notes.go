@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // used for file integrity checks, NOT security
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -34,8 +35,9 @@ import (
 	"time"
 	"unicode"
 
-	gogithub "github.com/google/go-github/v53/github"
+	gogithub "github.com/google/go-github/v58/github"
 	"github.com/nozzle/throttler"
+	"github.com/sergi/go-diff/diffmatchpatch"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -135,6 +137,12 @@ type ReleaseNote struct {
 
 	// DataFields a key indexed map of data fields
 	DataFields map[string]ReleaseNotesDataField `json:"-"`
+
+	// IsMapped is set if the note got modified from a map
+	IsMapped bool `json:"is_mapped,omitempty"`
+
+	// PRBody is the full PR body of the release note
+	PRBody string `json:"pr_body,omitempty"`
 }
 
 type Documentation struct {
@@ -253,7 +261,7 @@ func GatherReleaseNotes(opts *options.Options) (*ReleaseNotes, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing release notes: %w", err)
 	}
-	logrus.Infof("finished gathering release notes in %v", time.Since(startTime))
+	logrus.Infof("Finished gathering release notes in %v", time.Since(startTime))
 
 	return releaseNotes, nil
 }
@@ -514,6 +522,7 @@ func (g *Gatherer) ReleaseNoteFromCommit(result *Result) (*ReleaseNote, error) {
 		DuplicateKind:  isDuplicateKind,
 		ActionRequired: labelExactMatch(pr, "release-note-action-required"),
 		DoNotPublish:   labelExactMatch(pr, "release-note-none"),
+		PRBody:         prBody,
 	}, nil
 }
 
@@ -700,6 +709,69 @@ func (g *Gatherer) gatherNotes(commits []*gogithub.RepositoryCommit) (filtered [
 	return allResults.List(), nil
 }
 
+// ReleaseNoteForPullRequest returns a release note from a pull request number.
+// If the release note is blank or
+func (g *Gatherer) ReleaseNoteForPullRequest(prNr int) (*ReleaseNote, error) {
+	pr, _, err := g.client.GetPullRequest(g.context, g.options.GithubOrg, g.options.GithubRepo, prNr)
+	if err != nil {
+		return nil, fmt.Errorf("reading PR from GitHub: %w", err)
+	}
+	prBody := pr.GetBody()
+
+	// This will be true when the release note is NONE or the flag is set
+	var doNotPublish bool
+
+	// If we match exclusion filter (release-note-none), we don't look further,
+	// instead we return that PR. We return that PR because it might have a map,
+	// which is checked after this function returns
+	if MatchesExcludeFilter(prBody) || len(labelsWithPrefix(pr, "release-note-none")) > 0 {
+		doNotPublish = true
+	}
+
+	// If we didn't match the exclusion filter, try to extract the release note from the PR.
+	// If we can't extract the release note, consider that the PR is invalid and take the next one
+	s, err := noteTextFromString(prBody)
+	if err != nil && !doNotPublish {
+		return nil, fmt.Errorf("PR #%d does not seem to contain a valid release note: %w", pr.GetNumber(), err)
+	}
+
+	// If we found a valid release note, return the PR, otherwise, take the next one
+	if s == "" && !doNotPublish {
+		return nil, fmt.Errorf("PR #%d does not seem to contain a valid release note", pr.GetNumber())
+	}
+
+	if doNotPublish {
+		s = ""
+	}
+
+	// Create the release notes object
+	note := &ReleaseNote{
+		Text:           s,
+		Markdown:       s,
+		Documentation:  []*Documentation{},
+		Author:         *pr.GetUser().Login,
+		AuthorURL:      fmt.Sprintf("%s%s", g.options.GithubBaseURL, *pr.GetUser().Login),
+		PrURL:          fmt.Sprintf("%s%s/%s/pull/%d", g.options.GithubBaseURL, g.options.GithubOrg, g.options.GithubRepo, prNr),
+		PrNumber:       prNr,
+		SIGs:           labelsWithPrefix(pr, "sig"),
+		Kinds:          labelsWithPrefix(pr, "kind"),
+		Areas:          labelsWithPrefix(pr, "area"),
+		Feature:        false,
+		Duplicate:      false,
+		DuplicateKind:  false,
+		ActionRequired: false,
+		DoNotPublish:   doNotPublish,
+		DataFields:     map[string]ReleaseNotesDataField{},
+		PRBody:         prBody,
+	}
+
+	if s != "" {
+		logrus.Infof("PR #%d seems to contain a release note", pr.GetNumber())
+	}
+
+	return note, nil
+}
+
 func (g *Gatherer) notesForCommit(commit *gogithub.RepositoryCommit) (*Result, error) {
 	prs, err := g.prsFromCommit(commit)
 	if err != nil {
@@ -740,7 +812,7 @@ func (g *Gatherer) notesForCommit(commit *gogithub.RepositoryCommit) (*Result, e
 		}
 
 		// If we found a valid release note, return the PR, otherwise, take the next one
-		if len(s) > 0 {
+		if s != "" {
 			res := &Result{commit: commit, pullRequest: pr}
 			logrus.Infof("PR #%d seems to contain a release note", pr.GetNumber())
 			// Do not test further PRs for this commit as soon as one PR matched
@@ -910,12 +982,9 @@ func canWaitAndRetry(r *gogithub.Response, err error) bool {
 
 // prsForCommitFromSHA retrieves the PR numbers for a commit given its sha
 func (g *Gatherer) prsForCommitFromSHA(sha string) (prs []*gogithub.PullRequest, err error) {
-	plo := &gogithub.PullRequestListOptions{
-		State: "closed",
-		ListOptions: gogithub.ListOptions{
-			Page:    1,
-			PerPage: 100,
-		},
+	plo := &gogithub.ListOptions{
+		Page:    1,
+		PerPage: 100,
 	}
 
 	prs = []*gogithub.PullRequest{}
@@ -935,12 +1004,18 @@ func (g *Gatherer) prsForCommitFromSHA(sha string) (prs []*gogithub.PullRequest,
 				break
 			}
 		}
-		prs = append(prs, pResult...)
+
+		for _, result := range pResult {
+			if result.GetState() == "closed" {
+				prs = append(prs, result)
+			}
+		}
+
 		if resp.NextPage == 0 {
 			break
 		}
-		plo.ListOptions.Page++
-		if plo.ListOptions.Page > resp.LastPage {
+		plo.Page++
+		if plo.Page > resp.LastPage {
 			break
 		}
 	}
@@ -1060,7 +1135,7 @@ func prettifySIGList(sigs []string) string {
 	for i, sig := range sigs {
 		switch i {
 		case 0:
-			sigList = fmt.Sprintf("SIG %s", prettySIG(sig))
+			sigList = "SIG " + prettySIG(sig)
 
 		case len(sigs) - 1:
 			sigList = fmt.Sprintf("%s and %s", sigList, prettySIG(sig))
@@ -1080,6 +1155,16 @@ func (rn *ReleaseNote) ApplyMap(noteMap *ReleaseNotesMap, markdownLinks bool) er
 	logrus.WithFields(logrus.Fields{
 		"pr": rn.PrNumber,
 	}).Debugf("Applying map to note")
+	rn.IsMapped = true
+
+	if noteMap.PRBody != nil && rn.PRBody != "" && rn.PRBody != *noteMap.PRBody {
+		logrus.Warnf("Original PR body of release note mapping changed for PR: #%d", rn.PrNumber)
+
+		dmp := diffmatchpatch.New()
+		diffs := dmp.DiffMain(rn.PRBody, *noteMap.PRBody, false)
+		logrus.Warnf("The diff between actual release note body and mapped one is:\n%s", dmp.DiffPrettyText(diffs))
+	}
+
 	reRenderMarkdown := false
 	if noteMap.ReleaseNote.Author != nil {
 		rn.Author = *noteMap.ReleaseNote.Author
@@ -1160,6 +1245,7 @@ func (rn *ReleaseNote) ToNoteMap() (string, error) {
 	noteMap.ReleaseNote.Feature = &rn.Feature
 	noteMap.ReleaseNote.ActionRequired = &rn.ActionRequired
 	noteMap.ReleaseNote.DoNotPublish = &rn.DoNotPublish
+	noteMap.PRBody = &rn.PRBody
 
 	yamlCode, err := yaml.Marshal(&noteMap)
 	if err != nil {
@@ -1184,7 +1270,7 @@ func (rn *ReleaseNote) ContentHash() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("calculating content hash from map: %w", err)
 	}
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // capitalizeString returns a capitalized string of the input string

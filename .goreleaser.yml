@@ -1,0 +1,152 @@
+---
+project_name: kubernetes-release
+
+env:
+  - CGO_ENABLED=0
+  - COSIGN_YES=true
+
+before:
+  hooks:
+    - go mod tidy
+    - git diff --exit-code go.mod go.sum
+
+gomod:
+  proxy: true
+
+builds:
+  - id: krel
+    no_unique_dist_dir: true
+    main: ./cmd/krel
+    binary: krel-{{ .Arch }}-{{ .Os }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  - id: release-notes
+    no_unique_dist_dir: true
+    main: ./cmd/release-notes
+    binary: release-notes-{{ .Arch }}-{{ .Os }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  - id: publish-release
+    no_unique_dist_dir: true
+    main: ./cmd/publish-release
+    binary: publish-release-{{ .Arch }}-{{ .Os }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  - id: schedule-builder
+    no_unique_dist_dir: true
+    main: ./cmd/schedule-builder
+    binary: schedule-builder-{{ .Arch }}-{{ .Os }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: binary
+    name_template: "{{ .Binary }}"
+    allow_different_binary_count: true
+
+signs:
+  - id: keyless
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    cmd: cosign
+    args: ["sign-blob", "--output-signature", "${artifact}.sig", "--output-certificate", "${artifact}.pem", "${artifact}"]
+    artifacts: all
+
+sboms:
+  - id: krel
+    cmd: bom
+    args:
+      - generate
+      - "--output"
+      - "krel-bom.json.spdx"
+      - "-d"
+      - "../"
+      - "-c"
+      - "../.krel-bom-config.yaml"
+      - "--format"
+      - "json"
+    artifacts: any
+    documents:
+      - "krel-bom.json.spdx"
+
+  - id: release-notes
+    cmd: bom
+    args:
+      - generate
+      - "--output"
+      - "release-notes-bom.json.spdx"
+      - "-d"
+      - "../"
+      - "-c"
+      - "../.release-notes-bom-config.yaml"
+      - "--format"
+      - "json"
+    artifacts: any
+    documents:
+      - "release-notes-bom.json.spdx"
+
+  - id: publish-release
+    cmd: bom
+    args:
+      - generate
+      - "--output"
+      - "publish-release-bom.json.spdx"
+      - "-d"
+      - "../"
+      - "-c"
+      - "../.publish-release-bom-config.yaml"
+      - "--format"
+      - "json"
+    artifacts: any
+    documents:
+      - "publish-release-bom.json.spdx"
+
+  - id: schedule-builder
+    cmd: bom
+    args:
+      - generate
+      - "--output"
+      - "schedule-builder-bom.json.spdx"
+      - "-d"
+      - "../"
+      - "-c"
+      - "../.schedule-builder-bom-config.yaml"
+      - "--format"
+      - "json"
+    artifacts: any
+    documents:
+      - "schedule-builder-bom.json.spdx"
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+release:
+  github:
+    owner: kubernetes
+    name: release
+  prerelease: auto
+
+changelog:
+  skip: true

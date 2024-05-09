@@ -31,8 +31,10 @@ import (
 	"strings"
 
 	"github.com/blang/semver/v4"
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/sirupsen/logrus"
 
+	"k8s.io/release/gcb"
 	"k8s.io/release/pkg/gcp/auth"
 	"k8s.io/release/pkg/gcp/build"
 	"k8s.io/release/pkg/kubecross"
@@ -40,6 +42,7 @@ import (
 	"sigs.k8s.io/release-sdk/gcli"
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-utils/util"
+	utilsversion "sigs.k8s.io/release-utils/version"
 )
 
 // StringSliceSeparator is the separator used for passing string slices as GCB
@@ -92,18 +95,20 @@ type Options struct {
 	// NonInteractive does not ask any questions if set to true.
 	NonInteractive bool
 
-	NoMock       bool
-	Stage        bool
-	Release      bool
-	FastForward  bool
-	Stream       bool
-	BuildAtHead  bool
-	Branch       string
-	ReleaseType  string
-	BuildVersion string
-	GcpUser      string
-	LogLevel     string
-	LastJobs     int64
+	NoMock        bool
+	Stage         bool
+	Release       bool
+	FastForward   bool
+	Stream        bool
+	BuildAtHead   bool
+	Branch        string
+	ReleaseType   string
+	BuildVersion  string
+	GcpUser       string
+	LogLevel      string
+	CustomK8SRepo string
+	CustomK8sOrg  string
+	LastJobs      int64
 
 	// OpenBuildService parameters
 	OBSStage         bool
@@ -114,6 +119,7 @@ type Options struct {
 	Architectures    []string
 	OBSProject       string
 	PackageSource    string
+	OBSWait          bool
 }
 
 // NewDefaultOptions returns a new default `*Options` instance.
@@ -216,12 +222,53 @@ func (g *GCB) Submit() error {
 		return fmt.Errorf("pre-checking for GCP package usage: %w", err)
 	}
 
-	if err := g.repoClient.Open(); err != nil {
-		return fmt.Errorf("open release repo: %w", err)
+	var jobType string
+	switch {
+	// TODO: Consider a '--validate' flag to validate the GCB config without submitting
+	case g.options.Stage:
+		jobType = gcb.JobTypeStage
+	case g.options.Release:
+		jobType = gcb.JobTypeRelease
+	case g.options.FastForward:
+		jobType = gcb.JobTypeFastForward
+	case g.options.OBSStage:
+		jobType = gcb.JobTypeObsStage
+	case g.options.OBSRelease:
+		jobType = gcb.JobTypeObsRelease
+	default:
+		return g.listJobs(g.options.Project, g.options.LastJobs)
 	}
 
-	if err := g.repoClient.CheckState(toolOrg, toolRepo, toolRef, g.options.NoMock); err != nil {
-		return fmt.Errorf("verifying repository state: %w", err)
+	version := utilsversion.GetVersionInfo().GitVersion
+	if err := g.repoClient.Open(); errors.Is(err, gogit.ErrRepositoryNotExists) {
+		// Use the embedded cloudbuild files
+		configDir, err := gcb.New().DirForJobType(jobType)
+		if err != nil {
+			return fmt.Errorf("get cloudbuild dir for job type: %w", err)
+		}
+
+		g.options.ConfigDir = configDir
+		defer os.RemoveAll(configDir)
+	} else if err != nil {
+		// Any other error
+		return fmt.Errorf("open release repo: %w", err)
+	} else {
+		// Using the local k/release repository
+		if err := g.repoClient.CheckState(toolOrg, toolRepo, toolRef, g.options.NoMock); err != nil {
+			return fmt.Errorf("verifying repository state: %w", err)
+		}
+
+		toolRoot, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get tool root: %w", err)
+		}
+
+		g.options.ConfigDir = filepath.Join(toolRoot, "gcb", jobType)
+
+		version, err = g.repoClient.GetTag()
+		if err != nil {
+			return fmt.Errorf("getting current tag: %w", err)
+		}
 	}
 
 	logrus.Infof("Running GCB with the following options: %+v", g.options)
@@ -237,7 +284,7 @@ func (g *GCB) Submit() error {
 
 	// build the GCS bucket string to be used to sign all the artifacts
 	bucketPrefix := release.BucketPrefix
-	gcsBucket := fmt.Sprintf("gs://%s", bucketPrefix)
+	gcsBucket := "gs://" + bucketPrefix
 	if g.options.NoMock {
 		gcsBucket = strings.TrimSuffix(gcsBucket, "-")
 	} else {
@@ -266,7 +313,7 @@ func (g *GCB) Submit() error {
 
 		if submit {
 			gcbSubs["NOMOCK_TAG"] = "nomock"
-			gcbSubs["NOMOCK"] = fmt.Sprintf("--%s", gcbSubs["NOMOCK_TAG"])
+			gcbSubs["NOMOCK"] = "--" + gcbSubs["NOMOCK_TAG"]
 		}
 	} else {
 		// TODO: Remove once cloudbuild.yaml doesn't strictly require vars to be set.
@@ -286,44 +333,16 @@ func (g *GCB) Submit() error {
 		}
 	}
 
-	toolRoot, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-
 	logrus.Info("Listing GCB substitutions prior to build submission...")
 	for k, v := range gcbSubs {
 		logrus.Infof("%s: %s", k, v)
 	}
 
-	var jobType string
-	switch {
-	// TODO: Consider a '--validate' flag to validate the GCB config without submitting
-	case g.options.Stage:
-		jobType = "stage"
-	case g.options.Release:
-		jobType = "release"
-	case g.options.FastForward:
-		jobType = "fast-forward"
-	case g.options.OBSStage:
-		jobType = "obs-stage"
-	case g.options.OBSRelease:
-		jobType = "obs-release"
-	default:
-		return g.listJobs(g.options.Project, g.options.LastJobs)
-	}
-
 	gcbSubs["LOG_LEVEL"] = g.options.LogLevel
 
-	g.options.ConfigDir = filepath.Join(toolRoot, "gcb", jobType)
 	prepareBuildErr := build.PrepareBuilds(&g.options.Options)
 	if prepareBuildErr != nil {
 		return prepareBuildErr
-	}
-
-	version, err := g.repoClient.GetTag()
-	if err != nil {
-		return fmt.Errorf("getting current tag: %w", err)
 	}
 
 	if err := build.RunSingleJob(&g.options.Options, "", "", version, gcbSubs); err != nil {
@@ -343,7 +362,15 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket string) 
 	gcbSubs["TOOL_REF"] = toolRef
 
 	gcbSubs["K8S_ORG"] = release.GetK8sOrg()
+	if g.options.CustomK8sOrg != "" {
+		gcbSubs["K8S_ORG"] = g.options.CustomK8sOrg
+	}
+
 	gcbSubs["K8S_REPO"] = release.GetK8sRepo()
+	if g.options.CustomK8SRepo != "" {
+		gcbSubs["K8S_REPO"] = g.options.CustomK8SRepo
+	}
+
 	gcbSubs["K8S_REF"] = release.GetK8sRef()
 
 	gcpUser := g.options.GcpUser
@@ -376,9 +403,8 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket string) 
 		logrus.Infof("KubeCross version not set for %s, falling back to latest", g.options.Branch)
 	}
 
-	kcVersionLatest := kcVersionBranch
 	if g.options.Branch != git.DefaultBranch {
-		kcVersionLatest, err = kc.Latest()
+		kcVersionLatest, err := kc.Latest()
 		if err != nil {
 			return gcbSubs, fmt.Errorf("retrieve latest kube-cross version: %w", err)
 		}
@@ -390,7 +416,6 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket string) 
 		}
 	}
 	gcbSubs["KUBE_CROSS_VERSION"] = kcVersionBranch
-	gcbSubs["KUBE_CROSS_VERSION_LATEST"] = kcVersionLatest
 
 	switch {
 	case g.options.OBSStage:
@@ -401,6 +426,7 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket string) 
 		gcbSubs["OBS_PROJECT"] = g.options.OBSProject
 		gcbSubs["OBS_PROJECT_TAG"] = strings.ReplaceAll(g.options.OBSProject, ":", "-")
 		gcbSubs["PACKAGE_SOURCE"] = g.options.PackageSource
+		gcbSubs["WAIT"] = strconv.FormatBool(g.options.OBSWait)
 
 		// Stop here when doing OBS stage
 		return gcbSubs, nil

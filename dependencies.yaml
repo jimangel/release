@@ -8,61 +8,22 @@ dependencies:
 
   # zeitgeist
   - name: "zeitgeist"
-    version: 0.4.1
+    version: 0.5.3
     refPaths:
     - path: hack/verify-dependencies.sh
       match: VERSION=(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?
 
-  # CNI plugins
-  - name: "CNI plugins"
-    version: 1.1.1
-    refPaths:
-    - path: packages/deb/build.go
-      match: currentCNIVersion\s+= "\d+\.\d+.\d+"
-    - path: packages/rpm/kubelet.spec
-      match: \%global CNI_VERSION \d+\.\d+.\d+
-    - path: pkg/kubepkg/kubepkg.go
-      match: CurrentCNIVersion\s+= "\d+\.\d+.\d+"
-
-  - name: "CNI plugins: minimum version"
-    version: 0.8.6
-    refPaths:
-    - path: packages/rpm/kubelet.spec
-      match: kubernetes-cni >= \d+\.\d+.\d+
-    - path: pkg/kubepkg/kubepkg.go
-      match: MinimumCNIVersion\s+= "\d+\.\d+.\d+"
-
-  # CRI Tools
-  - name: "crictl"
-    version: 1.25.0
-    refPaths:
-    - path: packages/deb/build.go
-      match: criToolsVersion\s+= "\d+\.\d+.\d+"
-    - path: packages/deb/build_test.go
-      match: cri-tools \(>= \d+.\d+.\d+\)
-    - path: packages/rpm/kubelet.spec
-      match: CRI_TOOLS_VERSION \d+.\d+.\d+
-
   # cosign
   - name: "ghcr.io/sigstore/cosign/cosign"
-    version: v2.2.0@sha256:280b47054876d415f66a279e666e35157cae6881f3538599710290c70bb75369
+    version: v2.2.2-dev@sha256:1a49e2f6cf3580935863d9d8d46066db9aad3dbd673ca24cb83d143221c6e64b
     refPaths:
     - path: images/build/go-runner/cloudbuild.yaml
-      match: ghcr.io/sigstore/cosign/cosign:v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?@sha256:[a-f0-9]{64}
-
-  # Docker
-  # TODO(deps): Not active yet
-  #- name: "docker"
-  #  version: 19.03
+      match: ghcr.io/sigstore/cosign/cosign:v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?-dev@sha256:[a-f0-9]{64}
 
   # Golang
   - name: "golang"
-    version: 1.21.1
+    version: 1.22.3
     refPaths:
-    - path: Dockerfile-kubepkg
-      match: FROM golang:\d+.\d+(alpha|beta|rc)?\.?(\d+)-(bookworm|bullseye) AS builder
-    - path: Dockerfile-kubepkg-rpm
-      match: FROM golang:\d+.\d+(alpha|beta|rc)?\.?(\d+)-(bookworm|bullseye) AS builder
     - path: images/build/cross/Makefile
       match: GO_VERSION\ \?=\ \d+.\d+(alpha|beta|rc)?\.?(\d+)?
     - path: images/build/cross/variants.yaml
@@ -73,8 +34,6 @@ dependencies:
       match: "GO_VERSION: '\\d+.\\d+(alpha|beta|rc)?\\.?(\\d+)?'"
     - path: images/releng/ci/variants.yaml
       match: "GO_VERSION: '\\d+.\\d+(alpha|beta|rc)?\\.?(\\d+)?'"
-    - path: packages/deb/Dockerfile
-      match: FROM golang:\d+.\d+(alpha|beta|rc)?\.?(\d+)-(bookworm|bullseye)
 
   # Golang pre-releases are denoted as `1.y<pre-release stage>.z`
   # Example: go1.17rc1
@@ -82,7 +41,7 @@ dependencies:
   # This entry is a stub of the major version to allow dependency checks to
   # pass when building Kubernetes using a pre-release of Golang.
   - name: "golang: 1.<major>"
-    version: 1.21
+    version: 1.22
     refPaths:
     - path: images/build/cross/Makefile
       match: GO_MAJOR_VERSION\ \?=\ \d+.\d+(alpha|beta|rc)?\.?(\d+)?
@@ -93,18 +52,26 @@ dependencies:
     - path: images/build/go-runner/variants.yaml
       match: "GO_MAJOR_VERSION: '\\d+.\\d+'"
 
+  - name: "golang: 1.<major> (github workflows)"
+    version: 1.22
+    refPaths:
+    - path: .github/workflows/release.yml
+      match: "go-version: '\\d+.\\d+'"
+
   - name: "golang: go.mod"
-    version: 1.20
+    version: 1.21
     refPaths:
     - path: go.mod
       match: go \d+.\d+
+
+  - name: "golang: go.mod - go-runner"
+    version: 1.21
+    refPaths:
     - path: images/build/go-runner/go.mod
-      match: go \d+.\d+
-    - path: packages/deb/go.mod
       match: go \d+.\d+
 
   - name: "golang: after kubernetes/kubernetes update"
-    version: 1.21.1
+    version: 1.22.2
     refPaths:
     - path: images/releng/k8s-ci-builder/Makefile
       match: GO_VERSION\ \?=\ \d+.\d+(alpha|beta|rc)?\.?(\d+)?
@@ -129,7 +96,7 @@ dependencies:
   # - v1.100.0-go1.17-bullseye.0 satisfies SemVer regex, while:
   # - v1.100-go1.17-bullseye.0 does not
   - name: "Kubernetes version (stable.0)"
-    version: v1.29.0
+    version: v1.31.0
     refPaths:
     - path: images/build/cross/Makefile
       match: KUBERNETES_VERSION\ \?=\ v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
@@ -137,7 +104,7 @@ dependencies:
       match: "KUBERNETES_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
   - name: "Kubernetes version (next candidate.0)"
-    version: v1.29.0
+    version: v1.31.0
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "KUBERNETES_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
@@ -149,8 +116,22 @@ dependencies:
       match: REVISION:\ '\d+'
 
   # go-runner
+  - name: "registry.k8s.io/build-image/go-runner (go1.22-bookworm)"
+    version: v2.3.1-go1.22.3-bookworm.0
+    refPaths:
+    - path: images/build/go-runner/variants.yaml
+      match: v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
+
+  - name: "registry.k8s.io/build-image/go-runner: image revision (go1.22-bookworm)"
+    version: 0
+    refPaths:
+    - path: images/build/go-runner/Makefile
+      match: REVISION \?= \d+
+    - path: images/build/go-runner/variants.yaml
+      match: REVISION:\ '\d+'
+
   - name: "registry.k8s.io/build-image/go-runner (go1.21-bookworm)"
-    version: v2.3.1-go1.21.1-bookworm.0
+    version: v2.3.1-go1.21.10-bookworm.0
     refPaths:
     - path: images/build/go-runner/variants.yaml
       match: v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
@@ -163,31 +144,50 @@ dependencies:
     - path: images/build/go-runner/variants.yaml
       match: REVISION:\ '\d+'
 
-  - name: "registry.k8s.io/build-image/go-runner (go1.20-bullseye)"
-    version: v2.3.1-go1.20.8-bullseye.0
-    refPaths:
-    - path: images/build/go-runner/variants.yaml
-      match: v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
-
-  - name: "registry.k8s.io/build-image/go-runner: image revision (go1.20-bullseye)"
-    version: 0
-    refPaths:
-    - path: images/build/go-runner/Makefile
-      match: REVISION \?= \d+
-    - path: images/build/go-runner/variants.yaml
-      match: REVISION:\ '\d+'
-
-  - name: "registry.k8s.io/build-image/go-runner: image revision (go1.20-bullseye)"
-    version: 0
-    refPaths:
-    - path: images/build/go-runner/Makefile
-      match: REVISION \?= \d+
-    - path: images/build/go-runner/variants.yaml
-      match: REVISION:\ '\d+'
-
   # kube-cross
+  - name: "registry.k8s.io/build-image/kube-cross (v1.31-go1.22)"
+    version: v1.31.0-go1.22.3-bullseye.0
+    refPaths:
+    - path: images/build/cross/variants.yaml
+      match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
+
+  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.31-go1.22)"
+    version: go1.22-bullseye
+    refPaths:
+    - path: images/build/cross/variants.yaml
+      match: "CONFIG: 'go\\d+.\\d+-bullseye'"
+
+  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.31-go1.22)"
+    version: 0
+    refPaths:
+    - path: images/build/cross/Makefile
+      match: REVISION \?= \d+
+    - path: images/build/cross/variants.yaml
+      match: REVISION:\ '\d+'
+
+
+  - name: "registry.k8s.io/build-image/kube-cross (v1.30-go1.22)"
+    version: v1.30.0-go1.22.3-bullseye.0
+    refPaths:
+    - path: images/build/cross/variants.yaml
+      match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
+
+  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.30-go1.22)"
+    version: go1.22-bullseye
+    refPaths:
+    - path: images/build/cross/variants.yaml
+      match: "CONFIG: 'go\\d+.\\d+-bullseye'"
+
+  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.30-go1.22)"
+    version: 0
+    refPaths:
+    - path: images/build/cross/Makefile
+      match: REVISION \?= \d+
+    - path: images/build/cross/variants.yaml
+      match: REVISION:\ '\d+'
+
   - name: "registry.k8s.io/build-image/kube-cross (v1.29-go1.21)"
-    version: v1.29.0-go1.21.1-bullseye.0
+    version: v1.29.0-go1.21.10-bullseye.0
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
@@ -206,19 +206,19 @@ dependencies:
     - path: images/build/cross/variants.yaml
       match: REVISION:\ '\d+'
 
-  - name: "registry.k8s.io/build-image/kube-cross (v1.28-go1.20)"
-    version: v1.28.0-go1.20.8-bullseye.0
+  - name: "registry.k8s.io/build-image/kube-cross (v1.28-go1.21)"
+    version: v1.28.0-go1.21.10-bullseye.0
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
-  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.28-go1.20)"
-    version: go1.20-bullseye
+  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.28-go1.21)"
+    version: go1.21-bullseye
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "CONFIG: 'go\\d+.\\d+-bullseye'"
 
-  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.28-go1.20)"
+  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.28-go1.21)"
     version: 0
     refPaths:
     - path: images/build/cross/Makefile
@@ -226,19 +226,19 @@ dependencies:
     - path: images/build/cross/variants.yaml
       match: REVISION:\ '\d+'
 
-  - name: "registry.k8s.io/build-image/kube-cross (v1.27-go1.20)"
-    version: v1.27.0-go1.20.8-bullseye.0
+  - name: "registry.k8s.io/build-image/kube-cross (v1.27-go1.21)"
+    version: v1.27.0-go1.21.10-bullseye.0
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
-  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.27-go1.20)"
-    version: go1.20-bullseye
+  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.27-go1.21)"
+    version: go1.21-bullseye
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "CONFIG: 'go\\d+.\\d+-bullseye'"
 
-  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.27-go1.20)"
+  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.27-go1.21)"
     version: 0
     refPaths:
     - path: images/build/cross/Makefile
@@ -246,72 +246,26 @@ dependencies:
     - path: images/build/cross/variants.yaml
       match: REVISION:\ '\d+'
 
-  - name: "registry.k8s.io/build-image/kube-cross (v1.26-go1.20)"
-    version: v1.26.0-go1.20.8-bullseye.0
+  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.30-cross1.22)"
+    version: v1.30.0-go1.22.2-bullseye.0
     refPaths:
-    - path: images/build/cross/variants.yaml
-      match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
-
-  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.26-go1.20)"
-    version: go1.20-bullseye
-    refPaths:
-    - path: images/build/cross/variants.yaml
-      match: "CONFIG: 'go\\d+.\\d+-bullseye'"
-
-  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.26-go1.20)"
-    version: 0
-    refPaths:
-    - path: images/build/cross/Makefile
-      match: REVISION \?= \d+
-    - path: images/build/cross/variants.yaml
-      match: REVISION:\ '\d+'
-
-  - name: "registry.k8s.io/build-image/kube-cross (v1.25-go1.20)"
-    version: v1.25.0-go1.20.8-bullseye.0
-    refPaths:
-    - path: images/build/cross/variants.yaml
-      match: "IMAGE_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
-
-  - name: "registry.k8s.io/build-image/kube-cross: config variant (v1.25-go1.20)"
-    version: go1.20-bullseye
-    refPaths:
-    - path: images/build/cross/variants.yaml
-      match: "CONFIG: 'go\\d+.\\d+-bullseye'"
-
-  - name: "registry.k8s.io/build-image/kube-cross: image revision (v1.25-go1.20)"
-    version: 0
-    refPaths:
-    - path: images/build/cross/Makefile
-      match: REVISION \?= \d+
-    - path: images/build/cross/variants.yaml
-      match: REVISION:\ '\d+'
+    - path: images/k8s-cloud-builder/variants.yaml
+      match: "KUBE_CROSS_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
   - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.29-cross1.21)"
-    version: v1.29.0-go1.21.1-bullseye.0
+    version: v1.29.0-go1.21.9-bullseye.0
     refPaths:
     - path: images/k8s-cloud-builder/variants.yaml
       match: "KUBE_CROSS_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
-  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.28-cross1.20)"
-    version: v1.28.0-go1.20.8-bullseye.0
+  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.28-cross1.21)"
+    version: v1.28.0-go1.21.9-bullseye.0
     refPaths:
     - path: images/k8s-cloud-builder/variants.yaml
       match: "KUBE_CROSS_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
-  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.27-cross1.20)"
-    version: v1.27.0-go1.20.8-bullseye.0
-    refPaths:
-    - path: images/k8s-cloud-builder/variants.yaml
-      match: "KUBE_CROSS_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
-
-  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.26-cross1.20)"
-    version: v1.26.0-go1.20.8-bullseye.0
-    refPaths:
-    - path: images/k8s-cloud-builder/variants.yaml
-      match: "KUBE_CROSS_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
-
-  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.25-cross1.20)"
-    version: v1.25.0-go1.20.8-bullseye.0
+  - name: "registry.k8s.io/build-image/kube-cross: dependents k8s-cloud-builder (v1.27-cross1.21)"
+    version: v1.27.0-go1.21.9-bullseye.0
     refPaths:
     - path: images/k8s-cloud-builder/variants.yaml
       match: "KUBE_CROSS_VERSION: 'v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
@@ -324,7 +278,7 @@ dependencies:
 
   # Golang (next candidate)
   - name: "golang (next candidate)"
-    version: 1.21
+    version: 1.22
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "GO_VERSION: '\\d+.\\d+(alpha|beta|rc)?\\.?(\\d+)?'"
@@ -343,14 +297,48 @@ dependencies:
       match: REVISION:\ '\d+'
 
   - name: "registry.k8s.io/build-image/kube-cross: config variant (next candidate)"
-    version: go1.21-bullseye
+    version: go1.22-bullseye
     refPaths:
     - path: images/build/cross/variants.yaml
       match: "CONFIG: 'go\\d+.\\d+-bullseye'"
 
+  # Golang (previous release branches: 1.30)
+  - name: "golang (previous release branches: 1.30)"
+    version: 1.22.3
+    refPaths:
+    - path: images/build/cross/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+    - path: images/build/go-runner/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+    - path: images/releng/ci/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+
+  - name: "golang: after kubernetes/kubernetes update (previous release branches: 1.30)"
+    version: 1.22.2
+    refPaths:
+    - path: images/releng/k8s-ci-builder/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+
+  # Golang (previous release branches: 1.29)
+  - name: "golang (previous release branches: 1.29)"
+    version: 1.21.10
+    refPaths:
+    - path: images/build/cross/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+    - path: images/build/go-runner/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+    - path: images/releng/ci/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+
+  - name: "golang: after kubernetes/kubernetes update (previous release branches: 1.29)"
+    version: 1.21.9
+    refPaths:
+    - path: images/releng/k8s-ci-builder/variants.yaml
+      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
+
   # Golang (previous release branches: 1.28)
   - name: "golang (previous release branches: 1.28)"
-    version: 1.20.8
+    version: 1.21.10
     refPaths:
     - path: images/build/cross/variants.yaml
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
@@ -360,20 +348,20 @@ dependencies:
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
 
   - name: "golang: after kubernetes/kubernetes update (previous release branches: master)"
-    version: 1.21.1
+    version: 1.22
     refPaths:
     - path: images/releng/k8s-ci-builder/variants.yaml
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
 
   - name: "golang: after kubernetes/kubernetes update (previous release branches: 1.28)"
-    version: 1.20.8
+    version: 1.21.9
     refPaths:
     - path: images/releng/k8s-ci-builder/variants.yaml
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
 
   # Golang (previous release branches: 1.27)
   - name: "golang (previous release branches: 1.27)"
-    version: 1.20.8
+    version: 1.21.10
     refPaths:
     - path: images/build/cross/variants.yaml
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
@@ -383,41 +371,7 @@ dependencies:
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
 
   - name: "golang: after kubernetes/kubernetes update (previous release branches: 1.27)"
-    version: 1.20.8
-    refPaths:
-    - path: images/releng/k8s-ci-builder/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-
-  # Golang (previous release branches: 1.26)
-  - name: "golang (previous release branches: 1.26)"
-    version: 1.20.8
-    refPaths:
-    - path: images/build/cross/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-    - path: images/build/go-runner/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-    - path: images/releng/ci/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-
-  - name: "golang: after kubernetes/kubernetes update (previous release branches: 1.26)"
-    version: 1.20.8
-    refPaths:
-    - path: images/releng/k8s-ci-builder/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-
- # Golang (previous release branches: 1.25)
-  - name: "golang (previous release branches: 1.25)"
-    version: 1.20.8
-    refPaths:
-    - path: images/build/cross/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-    - path: images/build/go-runner/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-    - path: images/releng/ci/variants.yaml
-      match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
-
-  - name: "golang: after kubernetes/kubernetes update (previous release branches: 1.25)"
-    version: 1.20.8
+    version: 1.21.9
     refPaths:
     - path: images/releng/k8s-ci-builder/variants.yaml
       match: \d+.\d+(alpha|beta|rc)?\.?(\d+)?
@@ -431,66 +385,48 @@ dependencies:
 
   # golangci-lint-version
   - name: "golangci-lint"
-    version: v1.53
+    version: v1.58
     refPaths:
     - path: .github/workflows/lint.yml
       match: "version: v\\d+.\\d+?\\.?(\\d+)?"
 
   # Base images
-  # # Use bullseye for kube-cross to achieve maximum glibc compatibility.
+  # Use bullseye for kube-cross to achieve maximum glibc compatibility.
   - name: "Debian: codename (bullseye)"
     version: bullseye
     refPaths:
     - path: images/build/cross/Makefile
       match: OS_CODENAME\ \?=\ bullseye
-    - path: packages/deb/Dockerfile
-      match: FROM golang:\d+.\d+(alpha|beta|rc)?\.?(\d+)-bullseye
-
-  - name: "Debian: codename (default)"
-    version: bullseye
-    refPaths:
     - path: images/build/cross/variants.yaml
       match: "OS_CODENAME: 'bullseye'"
-    # TODO: revert once all images are on bookworm
-    # - path: images/build/debian-base/Makefile
-    #   match: CONFIG\ \?=\ bullseye
-    # - path: images/build/debian-base/variants.yaml
-    #   match: "CONFIG: 'bullseye'"
-    # Must match distroless Debian version as well
-    # - path: images/build/go-runner/Makefile
-    #   match: OS_CODENAME\ \?=\ bullseye
+      # We keep them around for backwards compatibility and release branches.
     - path: images/build/go-runner/variants.yaml
       match: "OS_CODENAME: 'bullseye'"
-    # TODO: revert once all images are on bookworm
-    # - path: images/build/setcap/Makefile
-    #  match: CONFIG\ \?=\ bullseye
-    # - path: images/build/setcap/variants.yaml
-    #   match: "CONFIG: 'bullseye'"
-    # - path: images/releng/ci/variants.yaml
-    #   match: "OS_CODENAME: 'bullseye'"
     - path: images/releng/k8s-ci-builder/Makefile
       match: OS_CODENAME\ \?=\ bullseye
     - path: images/releng/k8s-ci-builder/variants.yaml
       match: "OS_CODENAME: 'bullseye'"
 
-
-  - name: "Debian: codename (next candidate)"
+  - name: "Debian: codename (default)"
     version: bookworm
     refPaths:
-    # TODO: revert once all images are on bookworm
-    # - path: images/build/cross/variants.yaml
-    #   match: "OS_CODENAME: 'bullseye'"
+    - path: images/build/debian-base/Makefile
+      match: CONFIG\ \?=\ bookworm
     - path: images/build/debian-base/variants.yaml
       match: "CONFIG: 'bookworm'"
-    # - path: images/build/go-runner/variants.yaml
-    #   match: "OS_CODENAME: 'bullseye'"
-    # - path: images/releng/ci/variants.yaml
-    #   match: "OS_CODENAME: 'bullseye'"
-    # - path: images/releng/k8s-ci-builder/variants.yaml
-    #   match: "OS_CODENAME: 'bullseye'"
+    - path: images/build/go-runner/Makefile
+      match: OS_CODENAME\ \?=\ bookworm
+    - path: images/build/setcap/Makefile
+      match: CONFIG\ \?=\ bookworm
+    - path: images/build/setcap/variants.yaml
+      match: "CONFIG: 'bookworm'"
+    - path: images/releng/ci/variants.yaml
+      match: "OS_CODENAME: 'bookworm'"
+    - path: images/releng/k8s-ci-builder/variants.yaml
+      match: "OS_CODENAME: 'bookworm'"
 
   - name: "registry.k8s.io/build-image/debian-base"
-    version: bookworm-v1.0.0
+    version: bookworm-v1.0.2
     refPaths:
     - path: images/build/debian-base/Makefile
       match: IMAGE_VERSION\ \?=\ bookworm-v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
@@ -498,29 +434,43 @@ dependencies:
       match: "IMAGE_VERSION: 'bookworm-v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
   - name: "registry.k8s.io/build-image/debian-base: dependents"
-    version: bookworm-v1.0.0
+    version: bookworm-v1.0.2
     refPaths:
     - path: images/build/setcap/Makefile
       match: DEBIAN_BASE_VERSION\ \?=\ bookworm-v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
     - path: images/build/setcap/variants.yaml
       match: "DEBIAN_BASE_VERSION: 'bookworm-v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
-  - name: "registry.k8s.io/build-image/distroless-iptables"
-    version: v0.3.2
+  - name: "registry.k8s.io/build-image/distroless-iptables (distroless-bookworm-go1.22)"
+    version: v0.5.4
     refPaths:
     - path: images/build/distroless-iptables/Makefile
       match: IMAGE_VERSION\ \?=\ v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
     - path: images/build/distroless-iptables/variants.yaml
       match: IMAGE_VERSION:\ \'v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)\'
 
-  - name: "registry.k8s.io/build-image/go-runner: dependents"
-    version: v2.3.1-go1.21.1-bookworm.0
+  - name: "registry.k8s.io/build-image/go-runner: dependents (distroless-bookworm-go1.22)"
+    version: v2.3.1-go1.22.3-bookworm.0
     refPaths:
     - path: images/build/distroless-iptables/Makefile
       match: GORUNNER_VERSION \?= v\d+\.\d+\.\d+-go\d+.\d+(alpha|beta|rc)?\.?(\d+)?-bookworm\.\d+
+    - path: images/build/distroless-iptables/variants.yaml
+      match: GORUNNER_VERSION:\ \'v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)\'
+
+  - name: "registry.k8s.io/build-image/distroless-iptables (distroless-bookworm-go1.21)"
+    version: v0.4.8
+    refPaths:
+    - path: images/build/distroless-iptables/variants.yaml
+      match: IMAGE_VERSION:\ \'v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)\'
+
+  - name: "registry.k8s.io/build-image/go-runner: dependents (distroless-bookworm-go1.21)"
+    version: v2.3.1-go1.21.10-bookworm.0
+    refPaths:
+    - path: images/build/distroless-iptables/variants.yaml
+      match: GORUNNER_VERSION:\ \'v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)\'
 
   - name: "registry.k8s.io/build-image/setcap"
-    version: bookworm-v1.0.0
+    version: bookworm-v1.0.2
     refPaths:
     - path: images/build/setcap/Makefile
       match: IMAGE_VERSION\ \?=\ bookworm-v((([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?)
@@ -529,19 +479,19 @@ dependencies:
 
   # Base images (next candidate)
   - name: "registry.k8s.io/build-image/debian-base (next candidate)"
-    version: bookworm-v1.0.0
+    version: bookworm-v1.0.2
     refPaths:
     - path: images/build/debian-base/variants.yaml
       match: "IMAGE_VERSION: 'bookworm-v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
   - name: "registry.k8s.io/build-image/debian-base: dependents (next candidate)"
-    version: bookworm-v1.0.0
+    version: bookworm-v1.0.2
     refPaths:
     - path: images/build/setcap/variants.yaml
       match: "DEBIAN_BASE_VERSION: 'bookworm-v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"
 
   - name: "registry.k8s.io/build-image/setcap (next candidate)"
-    version: bookworm-v1.0.0
+    version: bookworm-v1.0.2
     refPaths:
     - path: images/build/setcap/variants.yaml
       match: "IMAGE_VERSION: 'bookworm-v((([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?)'"

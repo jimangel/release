@@ -27,9 +27,9 @@ IMGNAME = kube-cross
 # Example:
 # - v1.100.0-go1.17-bullseye.0 satisfies SemVer regex, while:
 # - v1.100-go1.17-bullseye.0 does not
-KUBERNETES_VERSION ?= v1.29.0
-GO_VERSION ?= 1.21.1
-GO_MAJOR_VERSION ?= 1.21
+KUBERNETES_VERSION ?= v1.31.0
+GO_VERSION ?= 1.22.3
+GO_MAJOR_VERSION ?= 1.22
 OS_CODENAME ?= bullseye
 REVISION ?= 0
 TYPE ?= default

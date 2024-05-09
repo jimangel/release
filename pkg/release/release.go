@@ -139,27 +139,14 @@ const (
 	ProvenanceFilename = "provenance.json" // Name of the SLSA provenance file (used in stage and release)
 )
 
-var (
-	ManifestImages = []string{
-		"conformance",
-		"kube-apiserver",
-		"kube-controller-manager",
-		"kube-proxy",
-		"kube-scheduler",
-	}
-
-	SupportedArchitectures = []string{
-		"amd64",
-		"arm",
-		"arm64",
-		"ppc64le",
-		"s390x",
-	}
-
-	FastArchitectures = []string{
-		"amd64",
-	}
-)
+var ManifestImages = []string{
+	"conformance",
+	"kube-apiserver",
+	"kube-controller-manager",
+	"kube-proxy",
+	"kube-scheduler",
+	"kubectl",
+}
 
 // GetToolOrg checks if the 'TOOL_ORG' environment variable is set.
 // If 'TOOL_ORG' is non-empty, it returns the value. Otherwise, it returns DefaultToolOrg.
@@ -201,7 +188,6 @@ func GetK8sRef() string {
 // GetK8sRef() point to their default values.
 func IsDefaultK8sUpstream() bool {
 	return GetK8sOrg() == DefaultK8sOrg &&
-		GetK8sRepo() == DefaultK8sRepo &&
 		GetK8sRef() == DefaultK8sRef
 }
 
@@ -278,7 +264,7 @@ func GetWorkspaceVersion() (string, error) {
 // URLPrefixForBucket returns the URL prefix for the provided bucket string
 func URLPrefixForBucket(bucket string) string {
 	bucket = strings.TrimPrefix(bucket, object.GcsPrefix)
-	urlPrefix := fmt.Sprintf("https://storage.googleapis.com/%s", bucket)
+	urlPrefix := "https://storage.googleapis.com/" + bucket
 	if bucket == ProductionBucket {
 		urlPrefix = ProductionBucketURL
 	}
@@ -500,7 +486,7 @@ func DockerHubLogin() error {
 	}
 	// Pipe the token into docker login
 	cmd := command.New(
-		"docker", "login", fmt.Sprintf("--username=%s", DockerHubUserName),
+		"docker", "login", "--username="+DockerHubUserName,
 		"--password", os.Getenv(DockerHubEnvKey),
 	)
 	// Run docker login:

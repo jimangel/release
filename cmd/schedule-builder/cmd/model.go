@@ -16,27 +16,41 @@ limitations under the License.
 
 package cmd
 
-// PatchSchedule main struct to hold the schedules
+// PatchSchedule main struct to hold the schedules.
 type PatchSchedule struct {
-	Schedules []Schedule `yaml:"schedules"`
+	UpcomingReleases []*PatchRelease `json:"upcoming_releases,omitempty" yaml:"upcoming_releases,omitempty"`
+	Schedules        []*Schedule     `json:"schedules,omitempty"         yaml:"schedules,omitempty"`
 }
 
-// PreviousPatches struct to define the old patch schedules
-type PreviousPatches struct {
-	Release            string `yaml:"release"`
-	CherryPickDeadline string `yaml:"cherryPickDeadline"`
-	TargetDate         string `yaml:"targetDate"`
-	Note               string `yaml:"note"`
+// PatchRelease struct to define the patch schedules.
+type PatchRelease struct {
+	Release            string `json:"release,omitempty"            yaml:"release,omitempty"`
+	CherryPickDeadline string `json:"cherryPickDeadline,omitempty" yaml:"cherryPickDeadline,omitempty"`
+	TargetDate         string `json:"targetDate,omitempty"         yaml:"targetDate,omitempty"`
+	Note               string `json:"note,omitempty"               yaml:"note,omitempty"`
 }
 
-// Schedule struct to define the release schedule for a specific version
+// Schedule struct to define the release schedule for a specific version.
 type Schedule struct {
-	Release            string            `yaml:"release"`
-	Next               string            `yaml:"next"`
-	CherryPickDeadline string            `yaml:"cherryPickDeadline"`
-	TargetDate         string            `yaml:"targetDate"`
-	EndOfLifeDate      string            `yaml:"endOfLifeDate"`
-	PreviousPatches    []PreviousPatches `yaml:"previousPatches"`
+	Release                  string          `json:"release,omitempty"                  yaml:"release,omitempty"`
+	ReleaseDate              string          `json:"releaseDate,omitempty"              yaml:"releaseDate,omitempty"`
+	Next                     *PatchRelease   `json:"next,omitempty"                     yaml:"next,omitempty"`
+	EndOfLifeDate            string          `json:"endOfLifeDate,omitempty"            yaml:"endOfLifeDate,omitempty"`
+	MaintenanceModeStartDate string          `json:"maintenanceModeStartDate,omitempty" yaml:"maintenanceModeStartDate,omitempty"`
+	PreviousPatches          []*PatchRelease `json:"previousPatches,omitempty"          yaml:"previousPatches,omitempty"`
+}
+
+// EolBranches is main struct to hold the end of life branches.
+type EolBranches struct {
+	Branches []*EolBranch `json:"branches,omitempty" yaml:"branches,omitempty"`
+}
+
+// EolBranch struct to define the end of life release branches.
+type EolBranch struct {
+	Release           string `json:"release,omitempty"           yaml:"release,omitempty"`
+	FinalPatchRelease string `json:"finalPatchRelease,omitempty" yaml:"finalPatchRelease,omitempty"`
+	EndOfLifeDate     string `json:"endOfLifeDate,omitempty"     yaml:"endOfLifeDate,omitempty"`
+	Note              string `json:"note,omitempty"              yaml:"note,omitempty"`
 }
 
 type ReleaseSchedule struct {

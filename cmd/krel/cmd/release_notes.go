@@ -26,10 +26,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/blang/semver/v4"
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
@@ -120,18 +122,20 @@ permissions to your fork of k/sig-release and k-sigs/release-notes.`,
 }
 
 type releaseNotesOptions struct {
-	repoPath           string
-	tag                string
-	userFork           string
 	createDraftPR      bool
 	createWebsitePR    bool
 	fixNotes           bool
 	listReleaseNotesV2 bool
+	interactiveMode    bool
+	updateRepo         bool
+	useSSH             bool
+	repoPath           string
+	tag                string
+	userFork           string
 	websiteRepo        string
-	mapProviders       []string
 	githubOrg          string
 	draftRepo          string
-	interactiveMode    bool
+	mapProviders       []string
 }
 
 type releaseNotesResult struct {
@@ -217,6 +221,22 @@ func init() {
 		"interactiveMode",
 		true,
 		"interactive mode, ask before creating the PR",
+	)
+
+	releaseNotesCmd.PersistentFlags().BoolVarP(
+		&releaseNotesOpts.useSSH,
+		"use-ssh",
+		"",
+		true,
+		"use ssh to clone the repository, if false will use https (default: true)",
+	)
+
+	releaseNotesCmd.PersistentFlags().BoolVarP(
+		&releaseNotesOpts.updateRepo,
+		"update-repo",
+		"",
+		true,
+		"update the cloned repository to fetch any upstream change (default: true)",
 	)
 
 	rootCmd.AddCommand(releaseNotesCmd)
@@ -347,10 +367,13 @@ func createDraftPR(repoPath, tag string) (err error) {
 	branchname := draftBranchPrefix + tag
 
 	// Prepare the fork of k/sig-release
+	opts := &gogit.CloneOptions{}
 	sigReleaseRepo, err := github.PrepareFork(
 		branchname,
 		git.DefaultGithubOrg, git.DefaultGithubReleaseRepo,
 		releaseNotesOpts.githubOrg, releaseNotesOpts.draftRepo,
+		releaseNotesOpts.useSSH, releaseNotesOpts.updateRepo,
+		opts,
 	)
 	if err != nil {
 		return fmt.Errorf("preparing local fork of kubernetes/sig-release: %w", err)
@@ -488,7 +511,7 @@ func createDraftPR(repoPath, tag string) (err error) {
 	pr, err := gh.CreatePullRequest(
 		git.DefaultGithubOrg, git.DefaultGithubReleaseRepo, git.DefaultBranch,
 		fmt.Sprintf("%s:%s", releaseNotesOpts.githubOrg, branchname),
-		fmt.Sprintf("Update release notes draft to version %s", tag), prBody,
+		"Update release notes draft to version "+tag, prBody,
 	)
 	if err != nil {
 		logrus.Warnf("An error has occurred while creating the pull request for %s", tag)
@@ -585,7 +608,7 @@ func addReferenceToAssetsFile(repoPath, newJSONFile string) error {
 	fileIsReferenced := false
 	for scanner.Scan() {
 		// Check if the assets file already has the json notes referenced:
-		if strings.Contains(scanner.Text(), fmt.Sprintf("assets/%s", newJSONFile)) {
+		if strings.Contains(scanner.Text(), "assets/"+newJSONFile) {
 			logrus.Warnf("File %s is already referenced in assets.ts", newJSONFile)
 			fileIsReferenced = true
 			break
@@ -657,9 +680,13 @@ func createWebsitePR(repoPath, tag string) (err error) {
 	branchname := websiteBranchPrefix + tag
 
 	// checkout kubernetes-sigs/release-notes
+	opts := &gogit.CloneOptions{}
 	k8sSigsRepo, err := github.PrepareFork(
-		branchname, defaultKubernetesSigsOrg,
-		defaultKubernetesSigsRepo, releaseNotesOpts.githubOrg, releaseNotesOpts.websiteRepo,
+		branchname,
+		defaultKubernetesSigsOrg, defaultKubernetesSigsRepo,
+		releaseNotesOpts.githubOrg, releaseNotesOpts.websiteRepo,
+		releaseNotesOpts.useSSH, releaseNotesOpts.updateRepo,
+		opts,
 	)
 	if err != nil {
 		return fmt.Errorf("preparing local fork branch: %w", err)
@@ -698,7 +725,7 @@ func createWebsitePR(repoPath, tag string) (err error) {
 		return fmt.Errorf("adding release notes draft to staging area: %w", err)
 	}
 
-	if err := k8sSigsRepo.UserCommit(fmt.Sprintf("Patch relnotes.k8s.io with release %s", tag)); err != nil {
+	if err := k8sSigsRepo.UserCommit("Patch relnotes.k8s.io with release " + tag); err != nil {
 		return fmt.Errorf("error creating commit in %s/%s: %w", releaseNotesOpts.githubOrg, releaseNotesOpts.websiteRepo, err)
 	}
 
@@ -720,7 +747,7 @@ func createWebsitePR(repoPath, tag string) (err error) {
 	pr, err := gh.CreatePullRequest(
 		defaultKubernetesSigsOrg, defaultKubernetesSigsRepo, git.DefaultBranch,
 		fmt.Sprintf("%s:%s", releaseNotesOpts.githubOrg, branchname),
-		fmt.Sprintf("Patch relnotes.k8s.io to release %s", tag),
+		"Patch relnotes.k8s.io to release "+tag,
 		fmt.Sprintf("Automated patch to update relnotes.k8s.io to k/k version `%s` ", tag),
 	)
 	if err != nil {
@@ -766,8 +793,9 @@ func releaseNotesJSON(repoPath, tag string) (jsonString string, err error) {
 	}
 
 	logrus.Info("Cloning kubernetes/sig-release to read mapping files")
+	opts := &gogit.CloneOptions{}
 	sigReleaseRepo, err := git.CleanCloneGitHubRepo(
-		git.DefaultGithubOrg, git.DefaultGithubReleaseRepo, false,
+		git.DefaultGithubOrg, git.DefaultGithubReleaseRepo, false, true, opts,
 	)
 	if err != nil {
 		return "", fmt.Errorf("performing clone of k/sig-release: %w", err)
@@ -1094,7 +1122,6 @@ func fixReleaseNotes(workDir string, releaseNotes *notes.ReleaseNotes) error {
 	// Cycle all gathered release notes
 	for pr, note := range releaseNotes.ByPR() {
 		contentHash, err := note.ContentHash()
-		noteReviewed := false
 		if err != nil {
 			return fmt.Errorf("getting the content hash for PR#%d: %w", pr, err)
 		}
@@ -1127,6 +1154,7 @@ func fixReleaseNotes(workDir string, releaseNotes *notes.ReleaseNotes) error {
 			ActionRequired: note.ActionRequired,
 			Documentation:  note.Documentation,
 			DoNotPublish:   note.DoNotPublish,
+			PRBody:         note.PRBody,
 		}
 
 		if noteMaps != nil {
@@ -1162,7 +1190,7 @@ func fixReleaseNotes(workDir string, releaseNotes *notes.ReleaseNotes) error {
 			return fmt.Errorf("while asking to edit release note: %w", err)
 		}
 
-		noteReviewed = true
+		noteReviewed := true
 		if choice {
 			for {
 				retry, err := editReleaseNote(pr, workDir, originalNote, note)
@@ -1284,21 +1312,21 @@ func editReleaseNote(pr int, workDir string, originalNote, modifiedNote *notes.R
 		numChanges++
 	}
 
-	if fmt.Sprint(originalNote.Feature) == fmt.Sprint(modifiedNote.Feature) {
+	if strconv.FormatBool(originalNote.Feature) == strconv.FormatBool(modifiedNote.Feature) {
 		unalteredFields.ReleaseNote.Feature = &originalNote.Feature
 	} else {
 		modifiedFields.ReleaseNote.Feature = &modifiedNote.Feature
 		numChanges++
 	}
 
-	if fmt.Sprint(originalNote.ActionRequired) == fmt.Sprint(modifiedNote.ActionRequired) {
+	if strconv.FormatBool(originalNote.ActionRequired) == strconv.FormatBool(modifiedNote.ActionRequired) {
 		unalteredFields.ReleaseNote.ActionRequired = &originalNote.ActionRequired
 	} else {
 		modifiedFields.ReleaseNote.ActionRequired = &modifiedNote.ActionRequired
 		numChanges++
 	}
 
-	if fmt.Sprint(originalNote.DoNotPublish) == fmt.Sprint(modifiedNote.DoNotPublish) {
+	if strconv.FormatBool(originalNote.DoNotPublish) == strconv.FormatBool(modifiedNote.DoNotPublish) {
 		unalteredFields.ReleaseNote.DoNotPublish = &originalNote.DoNotPublish
 	} else {
 		modifiedFields.ReleaseNote.DoNotPublish = &modifiedNote.DoNotPublish
@@ -1373,7 +1401,6 @@ func editReleaseNote(pr int, workDir string, originalNote, modifiedNote *notes.R
 	// Verify that the new yaml is valid and can be serialized back into a Map
 	testMap := notes.ReleaseNotesMap{}
 	err = yaml.Unmarshal(changes, &testMap)
-
 	if err != nil {
 		logrus.Error("The YAML code has errors")
 		return true, fmt.Errorf("while verifying if changes are a valid map: %w", err)
@@ -1383,6 +1410,8 @@ func editReleaseNote(pr int, workDir string, originalNote, modifiedNote *notes.R
 		logrus.Error("The yaml code does not have a PR number")
 		return true, errors.New("invalid map: the YAML code did not have a PR number")
 	}
+
+	testMap.PRBody = &originalNote.PRBody
 
 	// Remarshall the newyaml to save only the new values
 	newYAML, err := yaml.Marshal(testMap)
@@ -1425,7 +1454,7 @@ func confirmWithUser(opts *releaseNotesOptions, question string) bool {
 	if !opts.interactiveMode {
 		return true
 	}
-	_, success, err := util.Ask(fmt.Sprintf("%s (Y/n)", question), "y:Y:yes|n:N:no|y", 10)
+	_, success, err := util.Ask(question+" (Y/n)", "y:Y:yes|n:N:no|y", 10)
 	if err != nil {
 		logrus.Error(err)
 		if err.(util.UserInputError).IsCtrlC() {

@@ -26,7 +26,7 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/sirupsen/logrus"
 
-	"k8s.io/release/pkg/obs/consts"
+	"k8s.io/release/pkg/consts"
 	"k8s.io/release/pkg/release"
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-utils/log"
@@ -140,6 +140,9 @@ type Options struct {
 	// Mutually exclusive with `ReleaseType`, `ReleaseBranch`, and
 	// `BuildVersion`.
 	PackageSource string
+
+	// Wait can be used to wait for the OBS build results.
+	Wait bool
 }
 
 // DefaultOptions returns a new `Options` instance.
@@ -346,7 +349,7 @@ func (s *StageOptions) Validate(state *State, submit bool) error {
 
 	if s.Options.BuildVersion != "" {
 		if err := s.Options.ValidateBuildVersion(state); err != nil {
-			return fmt.Errorf("validating build version")
+			return errors.New("validating build version")
 		}
 	} else if s.Options.Version == "" {
 		// Version is required only for stage,
@@ -390,7 +393,7 @@ func (s *Stage) Submit(stream bool) error {
 func (s *Stage) Run() error {
 	s.client.InitState()
 
-	logger := log.NewStepLogger(10)
+	logger := log.NewStepLogger(11)
 	v := version.GetVersionInfo()
 	logger.Infof("Using krel version: %s", v.GitVersion)
 
@@ -440,6 +443,11 @@ func (s *Stage) Run() error {
 	logger.WithStep().Info("Pushing packages to OBS")
 	if err := s.client.Push(); err != nil {
 		return fmt.Errorf("pushing packages to obs: %w", err)
+	}
+
+	logger.WithStep().Info("Waiting for OBS build results if required")
+	if err := s.client.Wait(); err != nil {
+		return fmt.Errorf("wait for OBS build results: %w", err)
 	}
 
 	return nil
