@@ -28,7 +28,7 @@ IMGNAME = kube-cross
 # - v1.100.0-go1.17-bullseye.0 satisfies SemVer regex, while:
 # - v1.100-go1.17-bullseye.0 does not
 KUBERNETES_VERSION ?= v1.31.0
-GO_VERSION ?= 1.22.3
+GO_VERSION ?= 1.22.4
 GO_MAJOR_VERSION ?= 1.22
 OS_CODENAME ?= bullseye
 REVISION ?= 0
@@ -83,7 +83,6 @@ container: check-env init-docker-buildx
 			--tag $(IMAGE)-$${platform##*/}:latest-$(CONFIG)-$(TYPE) \
 			--build-arg=BASEIMAGE=$(BASEIMAGE) \
 			--build-arg=PROTOBUF_VERSION=$(PROTOBUF_VERSION) \
-			--build-arg=ETCD_VERSION=$(ETCD_VERSION) \
 			--file $(TYPE)/Dockerfile \
 			.; \
 	done
