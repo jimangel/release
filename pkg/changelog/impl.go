@@ -17,6 +17,7 @@ limitations under the License.
 package changelog
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -33,9 +34,9 @@ import (
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/github"
 	"sigs.k8s.io/release-sdk/object"
-	"sigs.k8s.io/release-utils/http"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 
+	"k8s.io/release/pkg/consts"
 	"k8s.io/release/pkg/cve"
 	"k8s.io/release/pkg/notes"
 	"k8s.io/release/pkg/notes/document"
@@ -46,6 +47,7 @@ import (
 //counterfeiter:generate . impl
 //go:generate /usr/bin/env bash -c "cat ../../hack/boilerplate/boilerplate.generatego.txt changelogfakes/fake_impl.go > changelogfakes/_fake_impl.go && mv changelogfakes/_fake_impl.go changelogfakes/fake_impl.go"
 
+//nolint:interfacebloat // large interface is by design
 type impl interface {
 	// Used in `Run()`
 	TagStringToSemver(tag string) (semver.Version, error)
@@ -63,7 +65,7 @@ type impl interface {
 
 	// Used in `generateReleaseNotes()`
 	ValidateAndFinish(opts *options.Options) error
-	GatherReleaseNotes(opts *options.Options) (*notes.ReleaseNotes, error)
+	GatherReleaseNotes(ctx context.Context, opts *options.Options) (*notes.ReleaseNotes, error)
 	NewDocument(
 		releaseNotes *notes.ReleaseNotes, previousRev, currentRev string,
 	) (*document.Document, error)
@@ -83,7 +85,7 @@ type impl interface {
 	) error
 	ParseHTMLTemplate(text string) (*template.Template, error)
 	TemplateExecute(
-		tpl *template.Template, wr io.Writer, data interface{},
+		tpl *template.Template, wr io.Writer, data any,
 	) error
 	Abs(path string) (string, error)
 
@@ -100,7 +102,7 @@ type impl interface {
 type defaultImpl struct{}
 
 func (*defaultImpl) TagStringToSemver(tag string) (semver.Version, error) {
-	return util.TagStringToSemver(tag)
+	return helpers.TagStringToSemver(tag)
 }
 
 func (*defaultImpl) OpenRepo(repoPath string) (*git.Repo, error) {
@@ -150,9 +152,9 @@ func (*defaultImpl) ValidateAndFinish(opts *options.Options) error {
 }
 
 func (*defaultImpl) GatherReleaseNotes(
-	opts *options.Options,
+	ctx context.Context, opts *options.Options,
 ) (*notes.ReleaseNotes, error) {
-	return notes.GatherReleaseNotes(opts)
+	return notes.GatherReleaseNotes(ctx, opts)
 }
 
 func (*defaultImpl) NewDocument(
@@ -198,7 +200,7 @@ func (*defaultImpl) ParseHTMLTemplate(text string) (*template.Template, error) {
 }
 
 func (*defaultImpl) TemplateExecute(
-	tpl *template.Template, wr io.Writer, data interface{},
+	tpl *template.Template, wr io.Writer, data any,
 ) error {
 	return tpl.Execute(wr, data)
 }
@@ -208,7 +210,7 @@ func (*defaultImpl) Abs(path string) (string, error) {
 }
 
 func (*defaultImpl) GetURLResponse(url string) (string, error) {
-	content, err := http.NewAgent().Get(url)
+	content, err := consts.NewHTTPAgent().Get(url)
 	if err != nil {
 		return "", err
 	}

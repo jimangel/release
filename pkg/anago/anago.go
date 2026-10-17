@@ -23,10 +23,11 @@ import (
 
 	"github.com/blang/semver/v4"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 
 	"sigs.k8s.io/release-sdk/git"
+	"sigs.k8s.io/release-utils/helpers"
 	"sigs.k8s.io/release-utils/log"
-	"sigs.k8s.io/release-utils/util"
 	"sigs.k8s.io/release-utils/version"
 
 	"k8s.io/release/pkg/announce"
@@ -57,6 +58,15 @@ const (
 
 	// The default license for all artifacts.
 	LicenseIdentifier = "Apache-2.0"
+
+	// kubernetesPackageRef is the SPDX reference for the kubernetes package.
+	kubernetesPackageRef = "SPDXRef-Package-kubernetes"
+
+	// sourceCodeComment is the SBOM relationship comment for source code.
+	sourceCodeComment = "Source code"
+
+	// sbomOrganization is the organization credited as creator of the SBOMs.
+	sbomOrganization = "Kubernetes Release Engineering"
 )
 
 // Options are settings which will be used by `StageOptions` as well as
@@ -125,7 +135,7 @@ func (o *Options) ValidateBuildVersion(state *State) error {
 		return errors.New("invalid BuildVersion specified")
 	}
 
-	semverBuildVersion, err := util.TagStringToSemver(o.BuildVersion)
+	semverBuildVersion, err := helpers.TagStringToSemver(o.BuildVersion)
 	if err != nil {
 		return fmt.Errorf("invalid build version: %s: %w", o.BuildVersion, err)
 	}
@@ -271,7 +281,7 @@ func (s *Stage) Run() error {
 		return fmt.Errorf("init log file: %w", err)
 	}
 
-	logger := log.NewStepLogger(12)
+	logger := log.NewStepLogger(11)
 	v := version.GetVersionInfo()
 	logger.Infof("Using krel version: %s", v.GitVersion)
 
@@ -323,16 +333,20 @@ func (s *Stage) Run() error {
 		return fmt.Errorf("generate changelog: %w", err)
 	}
 
-	logger.WithStep().Info("Verifying artifacts")
+	logger.WithStep().Info("Verifying artifacts and generating bill of materials")
 
-	if err := s.client.VerifyArtifacts(); err != nil {
-		return fmt.Errorf("verifying artifacts: %w", err)
-	}
+	g := new(errgroup.Group)
 
-	logger.WithStep().Info("Generating bill of materials")
+	g.Go(func() error {
+		return s.client.VerifyArtifacts()
+	})
 
-	if err := s.client.GenerateBillOfMaterials(); err != nil {
-		return fmt.Errorf("generating sbom: %w", err)
+	g.Go(func() error {
+		return s.client.GenerateBillOfMaterials()
+	})
+
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	logger.WithStep().Info("Staging artifacts")

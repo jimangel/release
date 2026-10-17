@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v4"
 
 	"sigs.k8s.io/release-sdk/object"
 )
@@ -35,7 +35,7 @@ type MapProvider interface {
 }
 
 // NewProviderFromInitString creates a new map provider from an initialization string.
-func NewProviderFromInitString(initString string) (MapProvider, error) {
+func NewProviderFromInitString(initString string) (MapProvider, error) { //nolint:ireturn // returning interface is intentional
 	// If init string starts with gs:// return a CloudStorageProvider
 	if len(initString) >= 5 && initString[0:5] == object.GcsPrefix {
 		// Currently for illustration purposes
@@ -127,12 +127,28 @@ type ReleaseNotesMap struct {
 }
 
 // ReleaseNotesDataField extra data added to a release note.
-type ReleaseNotesDataField interface{}
+type ReleaseNotesDataField any
 
 // DirectoryMapProvider is a provider that gets maps from a directory.
 type DirectoryMapProvider struct {
 	Path string
 	Maps map[int][]*ReleaseNotesMap
+}
+
+// GetMapsForPR get the release notes maps for a specific PR number.
+func (mp *DirectoryMapProvider) GetMapsForPR(pr int) (notesMap []*ReleaseNotesMap, err error) {
+	if mp.Maps == nil {
+		err := mp.readMaps()
+		if err != nil {
+			return nil, fmt.Errorf("while reading release notes maps: %w", err)
+		}
+	}
+
+	if notesMap, ok := mp.Maps[pr]; ok {
+		return notesMap, nil
+	}
+
+	return nil, nil
 }
 
 // readMaps Open the dir and read dir notes.
@@ -167,20 +183,4 @@ func (mp *DirectoryMapProvider) readMaps() error {
 	logrus.Infof("Successfully parsed release notes maps for %d PRs from %s", len(mp.Maps), mp.Path)
 
 	return err
-}
-
-// GetMapsForPR get the release notes maps for a specific PR number.
-func (mp *DirectoryMapProvider) GetMapsForPR(pr int) (notesMap []*ReleaseNotesMap, err error) {
-	if mp.Maps == nil {
-		err := mp.readMaps()
-		if err != nil {
-			return nil, fmt.Errorf("while reading release notes maps: %w", err)
-		}
-	}
-
-	if notesMap, ok := mp.Maps[pr]; ok {
-		return notesMap, nil
-	}
-
-	return nil, nil
 }

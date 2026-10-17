@@ -166,13 +166,6 @@ func addGenerateFlags(subcommand *cobra.Command) {
 		"Add links for PRs and authors are added in the markdown format",
 	)
 
-	subcommand.PersistentFlags().StringVar(
-		&opts.RequiredAuthor,
-		"required-author",
-		env.Default("REQUIRED_AUTHOR", "k8s-ci-robot"),
-		"Only commits from this GitHub user are considered. Set to empty string to include all users",
-	)
-
 	subcommand.PersistentFlags().BoolVar(
 		&opts.Debug,
 		"debug",
@@ -243,12 +236,6 @@ func addGenerateFlags(subcommand *cobra.Command) {
 		[]string{},
 		"specify a location to recursively look for release notes *.y[a]ml file mappings",
 	)
-	subcommand.PersistentFlags().BoolVar(
-		&opts.ListReleaseNotesV2,
-		"list-v2",
-		false,
-		"enable experimental implementation to list commits (ListReleaseNotesV2)",
-	)
 }
 
 // addGenerate adds the generate subcomand to the main release notes cobra cmd.
@@ -260,7 +247,7 @@ func addGenerate(parent *cobra.Command) {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			releaseNotes, err := notes.GatherReleaseNotes(opts)
+			releaseNotes, err := notes.GatherReleaseNotes(cmd.Context(), opts)
 			if err != nil {
 				return fmt.Errorf("gathering release notes: %w", err)
 			}

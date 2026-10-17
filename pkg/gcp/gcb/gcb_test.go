@@ -31,7 +31,7 @@ import (
 	"k8s.io/release/pkg/release"
 )
 
-func mockRepo() gcb.Repository {
+func mockRepo() *gcbfakes.FakeRepository {
 	mock := &gcbfakes.FakeRepository{}
 	mock.OpenReturns(nil)
 	mock.CheckStateReturns(nil)
@@ -40,14 +40,14 @@ func mockRepo() gcb.Repository {
 	return mock
 }
 
-func mockVersion(version string) gcb.Version {
+func mockVersion(version string) *gcbfakes.FakeVersion {
 	mock := &gcbfakes.FakeVersion{}
 	mock.GetKubeVersionForBranchReturns(version, nil)
 
 	return mock
 }
 
-func mockRelease(version string) gcb.Release {
+func mockRelease(version string) *gcbfakes.FakeRelease {
 	mock := &gcbfakes.FakeRelease{}
 	mock.GenerateReleaseVersionReturns(
 		release.NewReleaseVersions(version, "", "", "", ""), nil,
@@ -159,6 +159,7 @@ func TestSubmitGcbFailure(t *testing.T) {
 	}
 }
 
+//nolint:maintidx // complex but acceptable
 func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 	testcases := []struct {
 		name           string
@@ -198,6 +199,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 		{
@@ -228,6 +230,8 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
+				"FASTLY_SERVICE_NAME":    "dl.k8s.dev",
 			},
 		},
 		{
@@ -256,6 +260,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 		{
@@ -284,6 +289,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 		{
@@ -316,6 +322,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 		{
@@ -348,6 +355,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 		{
@@ -377,6 +385,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 		{
@@ -405,6 +414,7 @@ func TestSetGCBSubstitutionsSuccess(t *testing.T) {
 				"K8S_ORG":                git.DefaultGithubOrg,
 				"K8S_REPO":               git.DefaultGithubRepo,
 				"K8S_REF":                git.DefaultRef,
+				"STAGE_BUCKET":           "gs://test-bucket",
 			},
 		},
 	}

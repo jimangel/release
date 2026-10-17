@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	gogithub "github.com/google/go-github/v72/github"
+	gogithub "github.com/google/go-github/v88/github"
 	"github.com/stretchr/testify/require"
 
 	"k8s.io/release/pkg/fastforward/fastforwardfakes"
@@ -30,6 +30,7 @@ import (
 
 var errTest = errors.New("test")
 
+//nolint:maintidx // complex but acceptable
 func TestRun(t *testing.T) {
 	t.Parallel()
 

@@ -19,13 +19,14 @@ package release
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/blang/semver/v4"
 	"github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/release-sdk/git"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 )
 
 // GitObjectPusher is an object that pushes things to a gitrepo.
@@ -157,15 +158,7 @@ func (gp *GitObjectPusher) PushTag(newTag string) (err error) {
 	}
 
 	// verify that the tag exists locally before trying to push
-	tagExists := false
-
-	for _, tag := range currentTags {
-		if tag == newTag {
-			tagExists = true
-
-			break
-		}
-	}
+	tagExists := slices.Contains(currentTags, newTag)
 
 	if !tagExists {
 		return fmt.Errorf("unable to push tag %s, it does not exist in the repo yet", newTag)
@@ -192,32 +185,6 @@ func (gp *GitObjectPusher) PushTag(newTag string) (err error) {
 	}
 
 	logrus.Infof("Successfully pushed tag %s", newTag)
-
-	return nil
-}
-
-// checkTagName verifies that the specified tag name is valid.
-func (gp *GitObjectPusher) checkTagName(tagName string) error {
-	_, err := util.TagStringToSemver(tagName)
-	if err != nil {
-		return fmt.Errorf("transforming tag into semver: %w", err)
-	}
-
-	return nil
-}
-
-// checkBranchName verifies that the branch name is valid.
-func (gp *GitObjectPusher) checkBranchName(branchName string) error {
-	if !strings.HasPrefix(branchName, "release-") {
-		return errors.New("branch name has to start with release-")
-	}
-
-	versionTag := strings.TrimPrefix(branchName, "release-")
-	// Add .0 and check is we get a valid semver
-	_, err := semver.Parse(versionTag + ".0")
-	if err != nil {
-		return fmt.Errorf("parsing semantic version in branchname: %w", err)
-	}
 
 	return nil
 }
@@ -266,6 +233,32 @@ func (gp *GitObjectPusher) PushMain() error {
 	// logrun -s git push$dryrun_flag origin master || return 1
 	if err := gp.repo.Push(git.DefaultBranch); err != nil {
 		return fmt.Errorf("pushing %s branch: %w", git.DefaultBranch, err)
+	}
+
+	return nil
+}
+
+// checkTagName verifies that the specified tag name is valid.
+func (gp *GitObjectPusher) checkTagName(tagName string) error {
+	_, err := helpers.TagStringToSemver(tagName)
+	if err != nil {
+		return fmt.Errorf("transforming tag into semver: %w", err)
+	}
+
+	return nil
+}
+
+// checkBranchName verifies that the branch name is valid.
+func (gp *GitObjectPusher) checkBranchName(branchName string) error {
+	if !strings.HasPrefix(branchName, "release-") {
+		return errors.New("branch name has to start with release-")
+	}
+
+	versionTag := strings.TrimPrefix(branchName, "release-")
+	// Add .0 and check is we get a valid semver
+	_, err := semver.Parse(versionTag + ".0")
+	if err != nil {
+		return fmt.Errorf("parsing semantic version in branchname: %w", err)
 	}
 
 	return nil

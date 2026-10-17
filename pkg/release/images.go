@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -38,20 +39,30 @@ import (
 // Images is a wrapper around container image related functionality.
 type Images struct {
 	imageImpl
+
 	signer *sign.Signer
+
+	signingEnabled bool
 }
 
 // NewImages creates a new Images instance.
 func NewImages() *Images {
 	return &Images{
-		imageImpl: &defaultImageImpl{},
-		signer:    sign.New(sign.Default()),
+		imageImpl:      &defaultImageImpl{},
+		signer:         sign.New(sign.Default()),
+		signingEnabled: true,
 	}
 }
 
 // SetImpl can be used to set the internal image implementation.
 func (i *Images) SetImpl(impl imageImpl) {
 	i.imageImpl = impl
+}
+
+// SetSigningEnabled can be used to enable or disable the signing of published
+// container images and manifest lists.
+func (i *Images) SetSigningEnabled(enabled bool) {
+	i.signingEnabled = enabled
 }
 
 // imageImpl is a client for working with container images.
@@ -110,6 +121,18 @@ func (*defaultImageImpl) VerifyImage(_ *sign.Signer, _ string) error {
 
 var tagRegex = regexp.MustCompile(`^.+/(.+):.+$`)
 
+// publishWorkers is the number of concurrent workers for pushing and
+// signing arch-specific container images.
+const publishWorkers = 5
+
+// tarballItem holds metadata collected for a single arch-specific image
+// tarball, used to decouple the collection phase from the push/sign phase.
+type tarballItem struct {
+	path           string
+	origTag        string
+	newTagWithArch string
+}
+
 // PublishImages releases container images to the provided target registry.
 func (i *Images) Publish(registry, version, buildPath string) error {
 	version = i.normalizeVersion(version)
@@ -120,38 +143,17 @@ func (i *Images) Publish(registry, version, buildPath string) error {
 		releaseImagesPath, registry,
 	)
 
+	// Phase 1: Collect all tarball metadata and build the manifest map.
+	var items []tarballItem
+
 	manifestImages, err := i.GetManifestImages(
 		registry, version, buildPath,
 		func(path, origTag, newTagWithArch string) error {
-			if err := i.Execute(
-				"docker", "load", "-qi", path,
-			); err != nil {
-				return fmt.Errorf("load container image: %w", err)
-			}
-
-			if err := i.Execute(
-				"docker", "tag", origTag, newTagWithArch,
-			); err != nil {
-				return fmt.Errorf("tag container image: %w", err)
-			}
-
-			logrus.Infof("Pushing %s", newTagWithArch)
-
-			if err := i.Execute(
-				"gcloud", "docker", "--", "push", newTagWithArch,
-			); err != nil {
-				return fmt.Errorf("push container image: %w", err)
-			}
-
-			if err := i.SignImage(i.signer, newTagWithArch); err != nil {
-				return fmt.Errorf("sign container image: %w", err)
-			}
-
-			if err := i.Execute(
-				"docker", "rmi", origTag, newTagWithArch,
-			); err != nil {
-				return fmt.Errorf("remove local container image: %w", err)
-			}
+			items = append(items, tarballItem{
+				path:           path,
+				origTag:        origTag,
+				newTagWithArch: newTagWithArch,
+			})
 
 			return nil
 		},
@@ -160,69 +162,46 @@ func (i *Images) Publish(registry, version, buildPath string) error {
 		return fmt.Errorf("get manifest images: %w", err)
 	}
 
+	// Phase 2: Push and sign all arch-specific images in parallel.
+	logrus.Infof(
+		"Pushing %d arch-specific images with %d workers",
+		len(items), publishWorkers,
+	)
+
+	g := new(errgroup.Group)
+	g.SetLimit(publishWorkers)
+
+	for _, item := range items {
+		g.Go(func() error {
+			return i.pushAndSignImage(item)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("push arch-specific images: %w", err)
+	}
+
+	// Phase 3: Create, push, and sign manifest lists in parallel.
 	if err := os.Setenv("DOCKER_CLI_EXPERIMENTAL", "enabled"); err != nil {
 		return fmt.Errorf("enable docker experimental CLI: %w", err)
 	}
 
+	logrus.Infof(
+		"Processing %d manifest lists with %d workers",
+		len(manifestImages), publishWorkers,
+	)
+
+	mg := new(errgroup.Group)
+	mg.SetLimit(publishWorkers)
+
 	for image, arches := range manifestImages {
-		imageVersion := fmt.Sprintf("%s:%s", image, version)
-		logrus.Infof("Creating manifest image %s", imageVersion)
+		mg.Go(func() error {
+			return i.createPushSignManifest(image, arches, version)
+		})
+	}
 
-		manifests := []string{}
-		for _, arch := range arches {
-			manifests = append(manifests,
-				fmt.Sprintf("%s-%s:%s", image, arch, version),
-			)
-		}
-
-		if err := i.Execute("docker", append(
-			[]string{"manifest", "create", "--amend", imageVersion},
-			manifests...,
-		)...); err != nil {
-			return fmt.Errorf("create manifest: %w", err)
-		}
-
-		for _, arch := range arches {
-			logrus.Infof(
-				"Annotating %s-%s:%s with --arch %s",
-				image, arch, version, arch,
-			)
-
-			if err := i.Execute(
-				"docker", "manifest", "annotate", "--arch", arch,
-				imageVersion, fmt.Sprintf("%s-%s:%s", image, arch, version),
-			); err != nil {
-				return fmt.Errorf("annotate manifest with arch: %w", err)
-			}
-		}
-
-		logrus.Infof("Pushing manifest image %s", imageVersion)
-
-		if err := wait.ExponentialBackoff(wait.Backoff{
-			Duration: time.Second,
-			Factor:   1.5,
-			Steps:    5,
-		}, func() (bool, error) {
-			if err := i.Execute("docker", "manifest", "push", imageVersion, "--purge"); err == nil {
-				return true, nil
-			} else if strings.Contains(err.Error(), "request canceled while waiting for connection") {
-				// The error is unfortunately not exported:
-				// https://github.com/golang/go/blob/dc04f3b/src/net/http/client.go#L720
-				// https://github.com/golang/go/blob/dc04f3b/src/net/http/transport.go#L2518
-				// ref: https://github.com/kubernetes/release/issues/2810
-				logrus.Info("Retrying manifest push")
-
-				return false, nil
-			}
-
-			return false, err
-		}); err != nil {
-			return fmt.Errorf("push manifest: %w", err)
-		}
-
-		if err := i.SignImage(i.signer, imageVersion); err != nil {
-			return fmt.Errorf("sign manifest list: %w", err)
-		}
+	if err := mg.Wait(); err != nil {
+		return fmt.Errorf("process manifest lists: %w", err)
 	}
 
 	return nil
@@ -302,7 +281,7 @@ func (i *Images) Validate(registry, version, buildPath string) error {
 			logrus.Infof("Digest for %s on %s: %s", imageVersion, arch, digest)
 		}
 
-		if err := os.RemoveAll(manifestFile.Name()); err != nil {
+		if err := os.RemoveAll(manifestFile.Name()); err != nil { //nolint:gosec // G703 - temp file path is safe
 			return fmt.Errorf("remove manifest file: %w", err)
 		}
 	}
@@ -375,7 +354,7 @@ func (i *Images) Exists(registry, version string, fast bool) (bool, error) {
 			logrus.Infof("Digest for %s on %s: %s", imageVersion, arch, digest)
 		}
 
-		if err := os.RemoveAll(manifestFile.Name()); err != nil {
+		if err := os.RemoveAll(manifestFile.Name()); err != nil { //nolint:gosec // G703 - temp file path is safe
 			return false, fmt.Errorf("remove manifest file: %w", err)
 		}
 	}
@@ -413,6 +392,7 @@ func (i *Images) GetManifestImages(
 				if err != nil {
 					return err
 				}
+
 				if info.IsDir() {
 					return nil
 				}
@@ -460,6 +440,118 @@ func (i *Images) GetManifestImages(
 	}
 
 	return manifestImages, nil
+}
+
+// pushAndSignImage loads, tags, pushes, signs, and removes a single
+// arch-specific container image.
+func (i *Images) pushAndSignImage(item tarballItem) error {
+	if err := i.Execute(
+		"docker", "load", "-qi", item.path,
+	); err != nil {
+		return fmt.Errorf("load container image: %w", err)
+	}
+
+	if err := i.Execute(
+		"docker", "tag", item.origTag, item.newTagWithArch,
+	); err != nil {
+		return fmt.Errorf("tag container image: %w", err)
+	}
+
+	logrus.Infof("Pushing %s", item.newTagWithArch)
+
+	if err := i.Execute(
+		"docker", "push", item.newTagWithArch,
+	); err != nil {
+		return fmt.Errorf("push container image: %w", err)
+	}
+
+	if i.signingEnabled {
+		if err := i.SignImage(i.signer, item.newTagWithArch); err != nil {
+			return fmt.Errorf("sign container image: %w", err)
+		}
+	} else {
+		logrus.Infof("Skipping signing of %s", item.newTagWithArch)
+	}
+
+	if err := i.Execute(
+		"docker", "rmi", item.origTag, item.newTagWithArch,
+	); err != nil {
+		return fmt.Errorf("remove local container image: %w", err)
+	}
+
+	return nil
+}
+
+// createPushSignManifest creates a manifest list for a single image,
+// annotates each architecture, pushes with retry, and signs.
+func (i *Images) createPushSignManifest(image string, arches []string, version string) error {
+	imageVersion := fmt.Sprintf("%s:%s", image, version)
+	logrus.Infof("Creating manifest image %s", imageVersion)
+
+	manifests := make([]string, 0, len(arches))
+	for _, arch := range arches {
+		manifests = append(manifests,
+			fmt.Sprintf("%s-%s:%s", image, arch, version),
+		)
+	}
+
+	if err := i.Execute("docker", append(
+		[]string{"manifest", "create", "--amend", imageVersion},
+		manifests...,
+	)...); err != nil {
+		return fmt.Errorf("create manifest: %w", err)
+	}
+
+	for _, arch := range arches {
+		logrus.Infof(
+			"Annotating %s-%s:%s with --arch %s",
+			image, arch, version, arch,
+		)
+
+		if err := i.Execute(
+			"docker", "manifest", "annotate", "--arch", arch,
+			imageVersion, fmt.Sprintf("%s-%s:%s", image, arch, version),
+		); err != nil {
+			return fmt.Errorf("annotate manifest with arch: %w", err)
+		}
+	}
+
+	logrus.Infof("Pushing manifest image %s", imageVersion)
+
+	if err := wait.ExponentialBackoff(wait.Backoff{
+		Duration: time.Second,
+		Factor:   1.5,
+		Steps:    5,
+	}, func() (bool, error) {
+		err := i.Execute("docker", "manifest", "push", imageVersion, "--purge")
+		if err == nil {
+			return true, nil
+		}
+
+		if strings.Contains(err.Error(), "request canceled while waiting for connection") {
+			// The error is unfortunately not exported:
+			// https://github.com/golang/go/blob/dc04f3b/src/net/http/client.go#L720
+			// https://github.com/golang/go/blob/dc04f3b/src/net/http/transport.go#L2518
+			// ref: https://github.com/kubernetes/release/issues/2810
+			logrus.Info("Retrying manifest push")
+
+			return false, nil
+		}
+
+		return false, err
+	}); err != nil {
+		return fmt.Errorf("push manifest: %w", err)
+	}
+
+	if i.signingEnabled {
+		if err := i.SignImage(i.signer, imageVersion); err != nil {
+			return fmt.Errorf("sign manifest list: %w", err)
+		}
+	} else {
+		logrus.Infof("Skipping signing of manifest list %s", imageVersion)
+	}
+
+	return nil
 }
 
 // normalizeVersion normalizes an container image version by replacing all invalid characters.

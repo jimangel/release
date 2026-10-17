@@ -19,14 +19,15 @@ package gcb
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/api/cloudbuild/v1"
 
 	"sigs.k8s.io/release-sdk/git"
+	"sigs.k8s.io/release-utils/helpers"
 
 	"k8s.io/release/pkg/gcp/build"
 	"k8s.io/release/pkg/release"
@@ -121,13 +122,10 @@ func (h *History) Run() error {
 	}
 
 	tableString := &strings.Builder{}
-	table := tablewriter.NewWriter(tableString)
-	table.SetAutoWrapText(false)
+	table := helpers.NewTableWriterWithDefaultsAndHeader(tableString, []string{"Step", "Command", "Link", "Start", "Duration", "Succeeded?"})
 
-	table.SetHeader([]string{"Step", "Command", "Link", "Start", "Duration", "Succeeded?"})
-
-	for i := len(jobs) - 1; i >= 0; i-- {
-		job := jobs[i]
+	for _, v := range slices.Backward(jobs) {
+		job := v
 		subcommand := ""
 
 		for _, tag := range job.Tags {
@@ -183,17 +181,13 @@ func (h *History) Run() error {
 		out := time.Time{}.Add(diff)
 
 		step := fmt.Sprintf("`%s%s`", mock, subcommand)
-		table.Append([]string{
+		_ = table.Append([]string{
 			step, command, logs, start,
 			out.Format("15:04:05"), status[job.Status],
 		})
 	}
 
-	table.SetBorders(tablewriter.Border{
-		Left: true, Top: false, Right: true, Bottom: false,
-	})
-	table.SetCenterSeparator("|")
-	table.Render()
+	_ = table.Render()
 
 	fmt.Print(tableString.String())
 

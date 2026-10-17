@@ -17,7 +17,21 @@ ARG OS_CODENAME
 
 # The Release Tooling can be compiled with a different version of Go than the
 # the Go version used in the kubernetes/kubernetes active development branch.
-FROM golang:${GO_VERSION_TOOLING}-${OS_CODENAME} AS builder
+FROM golang:${GO_VERSION_TOOLING}-alpine as go-source
+FROM debian:${OS_CODENAME}-slim AS builder
+
+# Install CA certificates for TLS verification
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Copy Go installation from official image
+COPY --from=go-source /usr/local/go /go
+
+# Set up Go environment
+ENV PATH=/go/bin:$PATH
+ENV GOROOT=/go
+ENV GOLANG_VERSION=${GO_VERSION_TOOLING}
+ENV GOTOOLCHAIN=auto
+ENV GOPATH=/go
 
 WORKDIR /go/src/k8s.io/release
 
@@ -89,12 +103,17 @@ RUN echo "Installing Packages ..." \
         && rm -rf /var/lib/apt/lists/* \
     && echo "Installing Go ..." \
         && export GO_TARBALL="go${GO_VERSION}.linux-amd64.tar.gz"\
-        && curl -fsSL "https://storage.googleapis.com/golang/${GO_TARBALL}" --output "${GO_TARBALL}" \
+        && curl -fsSL "https://dl.google.com/go/${GO_TARBALL}" --output "${GO_TARBALL}" \
         && tar xzf "${GO_TARBALL}" -C /usr/local \
         && rm "${GO_TARBALL}"\
         && mkdir -p "${GOPATH}/bin" \
     && echo "Installing gcloud SDK, kubectl ..." \
-        && curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/google-cloud-sdk.tar.gz --output google-cloud-sdk.tar.gz \
+        `# Pin to the last gcloud release supporting Python 3.9: the bullseye` \
+        `# base ships Python 3.9, but gcloud CLI >= 554.0.0 requires 3.10+ and` \
+        `# fails with "TypeError: unsupported operand type(s) for |".` \
+        `# TODO: migrate the base image to bookworm/trixie, then drop this pin.` \
+        && CLOUD_SDK_VERSION=553.0.0 \
+        && curl -fsSL "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz" --output google-cloud-sdk.tar.gz \
         && tar xzf google-cloud-sdk.tar.gz -C / \
         && rm google-cloud-sdk.tar.gz \
         && /google-cloud-sdk/install.sh \
@@ -107,7 +126,7 @@ RUN echo "Installing Packages ..." \
         && install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
         && echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
         && apt-get update \
-        && apt-get install -y --no-install-recommends docker-ce=5:24.0.* \
+        && apt-get install -y --no-install-recommends docker-ce=5:24.0.* docker-ce-cli=5:24.0.* \
         && rm -rf /var/lib/apt/lists/* \
         && sed -i 's/cgroupfs_mount$/#cgroupfs_mount\n/' /etc/init.d/docker \
     && echo "Installing Docker buildx ..." \

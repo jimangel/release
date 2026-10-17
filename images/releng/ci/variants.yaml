@@ -1,16 +1,16 @@
 variants:
-  go1.25-bookworm:
-    CONFIG: 'go1.25-bookworm'
-    GO_VERSION: '1.25rc2'
-    OS_CODENAME: 'bookworm'
+  go1.27-trixie:
+    CONFIG: 'go1.27-trixie'
+    GO_VERSION: '1.27.2'
+    OS_CODENAME: 'trixie'
     REVISION: '0'
-  go1.24-bookworm:
-    CONFIG: 'go1.24-bookworm'
-    GO_VERSION: '1.24.5'
-    OS_CODENAME: 'bookworm'
+  go1.26-trixie:
+    CONFIG: 'go1.26-trixie'
+    GO_VERSION: '1.26.9'
+    OS_CODENAME: 'trixie'
     REVISION: '0'
-  go1.23-bookworm:
-    CONFIG: 'go1.23-bookworm'
-    GO_VERSION: '1.23.11'
-    OS_CODENAME: 'bookworm'
+  go1.25-trixie:
+    CONFIG: 'go1.25-trixie'
+    GO_VERSION: '1.25.12'
+    OS_CODENAME: 'trixie'
     REVISION: '0'

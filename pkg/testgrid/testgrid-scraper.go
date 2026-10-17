@@ -38,8 +38,9 @@ type SummaryLookup struct {
 // This function implements a concurrency pattern to send http requests concurrently.
 func ReqTestgridDashboardSummaries(ctx context.Context, dashboardNames []DashboardName) (DashboardData, error) {
 	// Worker
-	requestData := func(done <-chan interface{}, dashboardNames ...DashboardName) <-chan SummaryLookup {
+	requestData := func(done <-chan any, dashboardNames ...DashboardName) <-chan SummaryLookup {
 		summaryLookups := make(chan SummaryLookup)
+
 		go func() {
 			defer close(summaryLookups)
 
@@ -60,7 +61,7 @@ func ReqTestgridDashboardSummaries(ctx context.Context, dashboardNames []Dashboa
 		return summaryLookups
 	}
 
-	done := make(chan interface{})
+	done := make(chan any)
 	defer close(done)
 
 	dashboardData := DashboardData{}
@@ -92,7 +93,7 @@ func ReqTestgridDashboardSummary(ctx context.Context, dashboardName DashboardNam
 		return nil, fmt.Errorf("create new request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704 - URL is constructed from validated input
 	if err != nil {
 		return nil, fmt.Errorf("request remote content: %w", err)
 	}
@@ -163,6 +164,7 @@ func (d *JobData) Overview() (Overview, error) {
 // UnmarshalTestgridSummary used to unmarshal bytes into TestgridSummary.
 func UnmarshalTestgridSummary(data []byte) (JobData, error) {
 	var r JobData
+
 	err := json.Unmarshal(data, &r)
 
 	return r, err
@@ -194,17 +196,17 @@ func (j *JobSummary) GetJobURL(jobName JobName) string {
 
 // Test contains information about tests if the status if the Job is failing.
 type Test struct {
-	DisplayName    string        `json:"display_name"`
-	TestName       string        `json:"test_name"`
-	FailCount      int64         `json:"fail_count"`
-	FailTimestamp  int64         `json:"fail_timestamp"`
-	PassTimestamp  int64         `json:"pass_timestamp"`
-	BuildLink      string        `json:"build_link"`
-	BuildURLText   string        `json:"build_url_text"`
-	BuildLinkText  string        `json:"build_link_text"`
-	FailureMessage string        `json:"failure_message"`
-	LinkedBugs     []interface{} `json:"linked_bugs"`
-	FailTestLink   string        `json:"fail_test_link"`
+	DisplayName    string `json:"display_name"`
+	TestName       string `json:"test_name"`
+	FailCount      int64  `json:"fail_count"`
+	FailTimestamp  int64  `json:"fail_timestamp"`
+	PassTimestamp  int64  `json:"pass_timestamp"`
+	BuildLink      string `json:"build_link"`
+	BuildURLText   string `json:"build_url_text"`
+	BuildLinkText  string `json:"build_link_text"`
+	FailureMessage string `json:"failure_message"`
+	LinkedBugs     []any  `json:"linked_bugs"`
+	FailTestLink   string `json:"fail_test_link"`
 }
 
 // DashboardName type for the testgrid dashboard (like sig-release-master-blocking).
@@ -231,7 +233,7 @@ func (j *JobSummary) FilterSigs() []string {
 		}
 	}
 
-	sigs := []string{}
+	sigs := make([]string, 0, len(sigsInvolved))
 	for k := range sigsInvolved {
 		sigs = append(sigs, k)
 	}

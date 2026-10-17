@@ -14,26 +14,48 @@
 
 ARG GO_VERSION
 ARG OS_CODENAME
-FROM golang:${GO_VERSION}-${OS_CODENAME} as builder
+
+# Get Go from official Alpine image
+FROM golang:${GO_VERSION}-alpine as go-source
+
+FROM debian:${OS_CODENAME}-slim
+
+# Copy Go installation from official image
+COPY --from=go-source /usr/local/go /usr/local/go
+
+# Set up Go environment
+ENV PATH=/usr/local/go/bin:$PATH
+ENV GOROOT=/usr/local/go
+ENV GOLANG_VERSION=${GO_VERSION}
+ENV GOTOOLCHAIN=auto
+ENV GOPATH=/usr/local/go
+
+# Install required packages for adding Google Cloud SDK repository
+RUN apt-get update && \
+    apt-get install -y curl gnupg
 
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" | \
     tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
 
-RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
-    apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+# Use gpg instead of apt-key (apt-key is deprecated and not present)
+RUN install -m 0755 -d /usr/share/keyrings && \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+    gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
 
 RUN apt-get update && \
     apt-get install -y \
         bsdmainutils \
         build-essential \
-        google-cloud-sdk \
+        git \
+        google-cloud-cli \
         jq \
         rpmlint \
+        wget \
     && rm -rf /var/lib/apt/lists/*
 
 # install goreleaser
-ARG GORELEASER_VERSION=v2.0.1
-ARG GORELEASER_SHA=48cea4e770468c85d3ee11e6c2fb7b59af9f28080781d47c48c59ba95b2eb86b
+ARG GORELEASER_VERSION=v2.13.3
+ARG GORELEASER_SHA=4b66f2f78f78561330350651ade557b70328664718490f37834749073af21d20
 RUN  \
     GORELEASER_DOWNLOAD_FILE=goreleaser_Linux_x86_64.tar.gz && \
     GORELEASER_DOWNLOAD_URL=https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/${GORELEASER_DOWNLOAD_FILE} && \
@@ -44,8 +66,8 @@ RUN  \
     goreleaser -v
 
 # install ko
-ARG KO_VERSION=v0.15.4
-ARG KO_SHA=511c88351d061cd510900376ae4731dfd916ca39c1cc7de5fc6f2b5cbde2007c
+ARG KO_VERSION=v0.18.1
+ARG KO_SHA=048ab11818089a43b7b74bc554494a79a3fd0d9822c061142e5cd3cf8b30cb27
 RUN  \
     KO_DOWNLOAD_FILE=ko_${KO_VERSION#v}_Linux_x86_64.tar.gz && \
     KO_DOWNLOAD_URL=https://github.com/ko-build/ko/releases/download/${KO_VERSION}/${KO_DOWNLOAD_FILE} && \

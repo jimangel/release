@@ -16,20 +16,14 @@ Source0: %{name}_%{version}.orig.tar.gz
 Source1: %{name}.rpmlintrc
 
 BuildRequires: systemd
-Requires: iptables >= 1.4.21
+Recommends: iptables >= 1.8.4
 {{ range $dep := .Metadata.Dependencies }}
 Requires: {{ $dep.Name }} {{ $dep.VersionConstraint }}
 {{ end }}
 %if "%{_vendor}" == "debbuild"
-Requires: iproute2
 Requires: mount
-Requires: conntrack
-%else
-Requires: iproute
-Requires: conntrack-tools
 %endif
 Requires: util-linux
-Requires: ethtool
 
 %if "%{_vendor}" == "debbuild"
 BuildRequires: systemd-deb-macros

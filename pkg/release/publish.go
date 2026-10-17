@@ -18,19 +18,24 @@ package release
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blang/semver/v4"
+	"github.com/fastly/go-fastly/v13/fastly"
 	"github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/release-sdk/gcli"
 	"sigs.k8s.io/release-sdk/object"
-	"sigs.k8s.io/release-utils/http"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
+
+	"k8s.io/release/pkg/consts"
 )
 
 // Publisher is the structure for publishing anything release related.
@@ -58,6 +63,7 @@ func (p *Publisher) SetClient(client publisherClient) {
 // publisherClient is a client for working with GCS
 //
 //counterfeiter:generate . publisherClient
+//nolint:interfacebloat // large interface is by design
 type publisherClient interface {
 	GSUtil(args ...string) error
 	GSUtilOutput(args ...string) (string, error)
@@ -69,8 +75,8 @@ type publisherClient interface {
 	TempDir(dir, pattern string) (name string, err error)
 	CopyToLocal(remote, local string) error
 	ReadFile(filename string) ([]byte, error)
-	Unmarshal(data []byte, v interface{}) error
-	Marshal(v interface{}) ([]byte, error)
+	Unmarshal(data []byte, v any) error
+	Marshal(v any) ([]byte, error)
 	TempFile(dir, pattern string) (f *os.File, err error)
 	CopyToRemote(local, remote string) error
 }
@@ -97,7 +103,7 @@ func (*defaultPublisher) GSUtilStatus(args ...string) (bool, error) {
 }
 
 func (*defaultPublisher) GetURLResponse(url string) (string, error) {
-	c, err := http.NewAgent().Get(url)
+	c, err := consts.NewHTTPAgent().Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -133,11 +139,11 @@ func (*defaultPublisher) ReadFile(filename string) ([]byte, error) {
 	return os.ReadFile(filename)
 }
 
-func (*defaultPublisher) Unmarshal(data []byte, v interface{}) error {
+func (*defaultPublisher) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-func (*defaultPublisher) Marshal(v interface{}) ([]byte, error) {
+func (*defaultPublisher) Marshal(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
@@ -177,7 +183,7 @@ func (p *Publisher) PublishVersion(
 		}
 	}
 
-	sv, err := util.TagStringToSemver(version)
+	sv, err := helpers.TagStringToSemver(version)
 	if err != nil {
 		return fmt.Errorf("invalid version %s", version)
 	}
@@ -284,12 +290,12 @@ func (p *Publisher) VerifyLatestUpdate(
 		return true, nil
 	}
 
-	sv, err := util.TagStringToSemver(version)
+	sv, err := helpers.TagStringToSemver(version)
 	if err != nil {
 		return false, fmt.Errorf("invalid version format %s", version)
 	}
 
-	gcsSemverVersion, err := util.TagStringToSemver(gcsVersion)
+	gcsSemverVersion, err := helpers.TagStringToSemver(gcsVersion)
 	if err != nil {
 		return false, fmt.Errorf("invalid GCS version format %s", gcsVersion)
 	}
@@ -372,10 +378,19 @@ func (p *Publisher) PublishToGcs(
 
 	logrus.Infof("Running `gsutil cp` from %s to: %s", latestFile, publishFileDst)
 
+	// https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/
+	var surrogateKey string
+	if strings.Contains(publicLink, ProductionBucketURL) {
+		surrogateKey = "prod-markers"
+	} else {
+		surrogateKey = "ci-markers"
+	}
+
 	if err := p.client.GSUtil(
 		"-m",
 		"-h", "Content-Type:text/plain",
 		"-h", "Cache-Control:private, max-age=0, no-transform",
+		"-h", "x-goog-meta-surrogate-key: "+surrogateKey,
 		"cp",
 		latestFile,
 		publishFileDst,
@@ -383,46 +398,99 @@ func (p *Publisher) PublishToGcs(
 		return fmt.Errorf("copy %s to %s: %w", latestFile, publishFileDst, err)
 	}
 
-	var content string
+	// The Kubernetes project uses Fastly and we cache markers so we need to purge them
+	serviceName := os.Getenv("FASTLY_SERVICE_NAME")
+	if serviceName != "" {
+		ctx := context.Background()
 
-	if !privateBucket {
-		// If public, validate public link
-		logrus.Infof("Validating uploaded version file using HTTP at %s", publicLink)
+		logrus.Infof("Detected Fastly service name: %s", serviceName)
 
-		response, err := p.client.GetURLResponse(publicLink)
-		if err != nil {
-			return fmt.Errorf("get content of %s: %w", publicLink, err)
+		apiToken := os.Getenv("FASTLY_API_TOKEN")
+		if apiToken == "" {
+			return errors.New("detected FASTLY_SERVICE_NAME but FASTLY_API_TOKEN is not set")
 		}
 
-		content = response
-	} else {
-		// Use the private location
-		logrus.Infof("Validating uploaded version file using `gsutil cat` at %s", publishFileDst)
-
-		response, err := p.client.GSUtilOutput("cat", publishFileDst)
+		client, err := fastly.NewClient(apiToken)
 		if err != nil {
-			return fmt.Errorf("get content of %s: %w", publishFileDst, err)
+			logrus.Errorf("Failed to create Fastly client: %v", err)
 		}
 
-		content = response
+		service, err := client.SearchService(ctx, &fastly.SearchServiceInput{
+			Name: serviceName,
+		})
+		if err != nil {
+			return fmt.Errorf("find service by name '%s': %w", serviceName, err)
+		}
+
+		purgeInput := &fastly.PurgeKeyInput{
+			ServiceID: *service.ServiceID,
+			Key:       surrogateKey,
+			Soft:      false,
+		}
+
+		logrus.Infof("Purging surrogate key '%s' on service '%s'...\n", surrogateKey, serviceName)
+
+		purgeResponse, err := client.PurgeKey(ctx, purgeInput)
+		if err != nil {
+			return fmt.Errorf("purge surrogate key %s: %w", surrogateKey, err)
+		}
+
+		logrus.Infof("Successfully purged our cache: %v", purgeResponse.Status)
 	}
 
-	if version != content {
-		return fmt.Errorf(
-			"version %s it not equal response %s",
-			version, content,
-		)
+	validationDeadline := time.Now().Add(3 * time.Minute)
+
+	for {
+		if !privateBucket {
+			// If public, validate public link
+			logrus.Infof("Validating uploaded version file using HTTP at %s", publicLink)
+
+			response, err := p.client.GetURLResponse(publicLink)
+			if err == nil && version == response {
+				logrus.Info("Version equals response")
+
+				return nil
+			}
+
+			if err == nil {
+				logrus.Warnf("Uploaded version file content does not match expected version yet (expected: %s, got: %s)", version, response)
+			} else {
+				logrus.Warnf("Unable to read uploaded version file yet at %s: %v", publicLink, err)
+			}
+		} else {
+			// Use the private location
+			logrus.Infof("Validating uploaded version file using `gsutil cat` at %s", publishFileDst)
+
+			response, err := p.client.GSUtilOutput("cat", publishFileDst)
+			if err == nil && version == response {
+				logrus.Info("Version equals response")
+
+				return nil
+			}
+
+			if err == nil {
+				logrus.Warnf("Uploaded version file content does not match expected version yet (expected: %s, got: %s)", version, response)
+			} else {
+				logrus.Warnf("Unable to read uploaded version file yet at %s: %v", publishFileDst, err)
+			}
+		}
+
+		if time.Now().After(validationDeadline) {
+			if !privateBucket {
+				return fmt.Errorf("timed out validating marker content at %s after 3 minutes", publicLink)
+			}
+
+			return fmt.Errorf("timed out validating marker content at %s after 3 minutes", publishFileDst)
+		}
+
+		time.Sleep(20 * time.Second)
 	}
-
-	logrus.Info("Version equals response")
-
-	return nil
 }
 
 func FixPublicReleaseNotesURL(gcsPath string) string {
 	const prefix = "gs://" + ProductionBucket
-	if strings.HasPrefix(gcsPath, prefix) {
-		gcsPath = ProductionBucketURL + strings.TrimPrefix(gcsPath, prefix)
+	if after, ok := strings.CutPrefix(gcsPath, prefix); ok {
+		gcsPath = ProductionBucketURL + after
 	}
 
 	return gcsPath
@@ -465,6 +533,7 @@ func (p *Publisher) PublishReleaseNotesIndex(
 		}
 
 		defer os.RemoveAll(tempDir)
+
 		tempIndexFile := filepath.Join(tempDir, releaseNotesIndex)
 
 		if err := p.client.CopyToLocal(

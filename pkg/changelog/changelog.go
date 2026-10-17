@@ -19,6 +19,7 @@ package changelog
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,32 +31,34 @@ import (
 
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/github"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 
 	"k8s.io/release/pkg/notes/options"
 )
 
 // Options are the main settings for generating the changelog.
 type Options struct {
-	RepoPath     string
-	Tag          string
-	Branch       string
-	Bucket       string
-	Tars         string
-	Images       string
-	HTMLFile     string
-	JSONFile     string
-	RecordDir    string
-	ReplayDir    string
-	CVEDataDir   string
-	CloneCVEMaps bool
-	Dependencies bool
+	RepoPath      string
+	Tag           string
+	Branch        string
+	Bucket        string
+	Tars          string
+	Images        string
+	HTMLFile      string
+	JSONFile      string
+	RecordDir     string
+	ReplayDir     string
+	CVEDataDir    string
+	CloneCVEMaps  bool
+	Dependencies  bool
+	IncludeLabels []string
 }
 
 // Changelog can be used to generate the changelog for a release.
 type Changelog struct {
-	options *Options
 	impl
+
+	options *Options
 }
 
 // New creates a new Changelog instance.
@@ -112,7 +115,7 @@ func (c *Changelog) Run() error {
 		if len(tag.Pre) == 0 { //nolint:gocritic // a switch case would not make it better
 			// Still create the downloads table
 			downloadsTable := &bytes.Buffer{}
-			startTag := util.SemverToTagString(semver.Version{
+			startTag := helpers.SemverToTagString(semver.Version{
 				Major: tag.Major, Minor: tag.Minor - 1, Patch: 0,
 			})
 
@@ -133,7 +136,7 @@ func (c *Changelog) Run() error {
 			// v1.x.0-alpha.1 releases use the previous minor as start commit.
 			// Those are usually the first releases being cut on master after
 			// the previous final has been released.
-			startRev = util.SemverToTagString(semver.Version{
+			startRev = helpers.SemverToTagString(semver.Version{
 				Major: tag.Major, Minor: tag.Minor - 1, Patch: 0,
 			})
 			logrus.Infof("Using previous minor %s as start tag", startRev)
@@ -182,7 +185,7 @@ func (c *Changelog) Run() error {
 		}
 
 		// A patch version, let’s just use the previous patch
-		startTag := util.SemverToTagString(semver.Version{
+		startTag := helpers.SemverToTagString(semver.Version{
 			Major: tag.Major, Minor: tag.Minor, Patch: tag.Patch - 1,
 		})
 
@@ -278,6 +281,7 @@ func (c *Changelog) generateReleaseNotes(
 	notesOptions.ReplayDir = c.options.ReplayDir
 	notesOptions.Pull = false
 	notesOptions.AddMarkdownLinks = true
+	notesOptions.IncludeLabels = c.options.IncludeLabels
 
 	if c.options.CVEDataDir != "" {
 		notesOptions.MapProviderStrings = append(
@@ -289,7 +293,8 @@ func (c *Changelog) generateReleaseNotes(
 		return "", "", fmt.Errorf("validating notes options: %w", err)
 	}
 
-	releaseNotes, err := c.GatherReleaseNotes(notesOptions)
+	// TODO: thread context from Changelog.Run() once it accepts one
+	releaseNotes, err := c.GatherReleaseNotes(context.TODO(), notesOptions)
 	if err != nil {
 		return "", "", fmt.Errorf("gather release notes: %w", err)
 	}
@@ -419,7 +424,7 @@ func (c *Changelog) writeHTML(tag semver.Version, markdown string) error {
 	output := bytes.Buffer{}
 	if err := c.TemplateExecute(t, &output, struct {
 		Title, Content string
-	}{util.SemverToTagString(tag), content.String()}); err != nil {
+	}{helpers.SemverToTagString(tag), content.String()}); err != nil {
 		return fmt.Errorf("execute HTML template: %w", err)
 	}
 
@@ -513,7 +518,7 @@ func (c *Changelog) commitChanges(
 	logrus.Info("Committing changes to main branch in repository")
 
 	if err := c.Commit(repo, fmt.Sprintf(
-		"CHANGELOG: Update directory for %s release", util.SemverToTagString(tag),
+		"CHANGELOG: Update directory for %s release", helpers.SemverToTagString(tag),
 	)); err != nil {
 		return fmt.Errorf("committing changes into repository: %w", err)
 	}
@@ -525,7 +530,7 @@ func (c *Changelog) commitChanges(
 			return fmt.Errorf("checking out release branch %s: %w", branch, err)
 		}
 
-		// Remove all other changelog files if we’re on the the first official release
+		// Remove all other changelog files if we’re on the first official release
 		if tag.Patch == 0 && len(tag.Pre) == 0 {
 			pattern := filepath.Join(RepoChangelogDir, "CHANGELOG-*.md")
 			logrus.Infof("Removing unnecessary %s files", pattern)
@@ -546,7 +551,7 @@ func (c *Changelog) commitChanges(
 		logrus.Info("Committing changes to release branch in repository")
 
 		if err := c.Commit(repo, fmt.Sprintf(
-			"Update %s for %s", releaseChangelog, util.SemverToTagString(tag),
+			"Update %s for %s", releaseChangelog, helpers.SemverToTagString(tag),
 		)); err != nil {
 			return fmt.Errorf("committing changes into repository: %w", err)
 		}

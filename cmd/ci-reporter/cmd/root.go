@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +25,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/shurcooL/githubv4"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/tj/go-spin"
-	"golang.org/x/net/context"
+
+	"sigs.k8s.io/release-utils/helpers"
 )
 
 var rootCmd = &cobra.Command{
@@ -150,7 +152,7 @@ type CIReporters []CIReporter
 var AllImplementedReporters = CIReporters{GithubReporter{}, TestgridReporter{}}
 
 // SearchReporter used to filter a implemented reporter by name.
-func SearchReporter(ctx context.Context, reporterName string) (CIReporter, error) {
+func SearchReporter(ctx context.Context, reporterName string) (CIReporter, error) { //nolint:ireturn // returning interface is intentional
 	var reporter CIReporter
 
 	reporterFound := false
@@ -217,7 +219,7 @@ func PrintReporterData(cfg *Config, reports *CIReportDataFields) error {
 
 	defer func() {
 		if err := out.Close(); err != nil {
-			panic(err)
+			logrus.Errorf("Failed to close output file: %v", err)
 		}
 	}()
 
@@ -245,18 +247,18 @@ func PrintReporterData(cfg *Config, reports *CIReportDataFields) error {
 			return fmt.Errorf("could not write to output stream: %w", err)
 		}
 
-		table := tablewriter.NewWriter(out)
+		table := helpers.NewTableWriter(out)
 		data := [][]string{}
 
 		// table in short version differs from regular table
 		if cfg.ShortReport {
-			table.SetHeader([]string{"TESTGRID BOARD", "TITLE", "STATUS", "STATUS DETAILS"})
+			table.Header([]string{"TESTGRID BOARD", "TITLE", "STATUS", "STATUS DETAILS"})
 
 			for _, record := range r.Records {
 				data = append(data, []string{record.TestgridBoard, record.Title, record.Status, record.StatusDetails})
 			}
 		} else {
-			table.SetHeader([]string{"TESTGRID BOARD", "TITLE", "STATUS", "STATUS DETAILS", "URL", "UPDATED AT"})
+			table.Header([]string{"TESTGRID BOARD", "TITLE", "STATUS", "STATUS DETAILS", "URL", "UPDATED AT"})
 
 			for _, record := range r.Records {
 				data = append(data, []string{
@@ -269,10 +271,8 @@ func PrintReporterData(cfg *Config, reports *CIReportDataFields) error {
 			}
 		}
 
-		table.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
-		table.AppendBulk(data)
-		table.SetCenterSeparator("|")
-		table.Render()
+		_ = table.Bulk(data)
+		_ = table.Render()
 
 		// write a summary
 		countCategories := map[string]int{}
@@ -282,10 +282,12 @@ func PrintReporterData(cfg *Config, reports *CIReportDataFields) error {
 			countCategories[data[i][categoryIndex]]++
 		}
 
-		categoryCounts := ""
+		var categoryCountsBuilder strings.Builder
 		for category, categoryCount := range countCategories {
-			categoryCounts += fmt.Sprintf("%s:%d ", category, categoryCount)
+			fmt.Fprintf(&categoryCountsBuilder, "%s:%d ", category, categoryCount)
 		}
+
+		categoryCounts := categoryCountsBuilder.String()
 
 		if _, err := fmt.Fprintf(out, "\nSUMMARY - Total:%d %s\n", len(data), categoryCounts); err != nil {
 			return fmt.Errorf("could not write to output stream: %w", err)

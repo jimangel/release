@@ -24,9 +24,9 @@ IMAGE = $(REGISTRY)/$(IMGNAME)
 TAG ?= $(shell git describe --tags --always --dirty)
 
 # Build args
-GO_VERSION ?= 1.24.5
-GO_VERSION_TOOLING ?= 1.24.5
-OS_CODENAME ?= bullseye
+GO_VERSION ?= 1.27.2
+GO_VERSION_TOOLING ?= 1.27.2
+OS_CODENAME ?= bookworm
 IMAGE_ARG ?= $(IMAGE):$(TAG)-$(CONFIG)
 
 BUILD_ARGS = --build-arg=GO_VERSION=$(GO_VERSION) \

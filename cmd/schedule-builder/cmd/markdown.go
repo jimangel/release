@@ -17,18 +17,21 @@ limitations under the License.
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"strings"
 	"text/template" // NOLINT // Mark text/template as not to be checked for producing yaml.
 	"time"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/sirupsen/logrus"
 
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 	"sigs.k8s.io/yaml"
 )
 
@@ -42,9 +45,7 @@ func parsePatchSchedule(patchSchedule PatchSchedule) string {
 	if len(patchSchedule.UpcomingReleases) > 0 {
 		output = append(output, "### Upcoming Monthly Releases\n")
 		tableString := &strings.Builder{}
-		table := tablewriter.NewWriter(tableString)
-		table.SetAutoWrapText(false)
-		table.SetHeader([]string{"Monthly Patch Release", "Cherry Pick Deadline", "Target Date"})
+		table := helpers.NewTableWriterWithDefaultsAndHeader(tableString, []string{"Monthly Patch Release", "Cherry Pick Deadline", "Target Date"})
 
 		for _, upcoming := range patchSchedule.UpcomingReleases {
 			targetDate, err := time.Parse(refDate, upcoming.TargetDate)
@@ -54,16 +55,14 @@ func parsePatchSchedule(patchSchedule PatchSchedule) string {
 				continue
 			}
 
-			table.Append([]string{
+			_ = table.Append([]string{
 				targetDate.Format(refDateMonthly),
 				strings.TrimSpace(upcoming.CherryPickDeadline),
 				strings.TrimSpace(upcoming.TargetDate),
 			})
 		}
 
-		table.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
-		table.SetCenterSeparator("|")
-		table.Render()
+		_ = table.Render()
 
 		output = append(output, tableString.String())
 	}
@@ -79,22 +78,18 @@ func parsePatchSchedule(patchSchedule PatchSchedule) string {
 		)
 
 		tableString := &strings.Builder{}
-		table := tablewriter.NewWriter(tableString)
-		table.SetAutoWrapText(false)
-		table.SetHeader([]string{"Patch Release", "Cherry Pick Deadline", "Target Date", "Note"})
+		table := helpers.NewTableWriterWithDefaultsAndHeader(tableString, []string{"Patch Release", "Cherry Pick Deadline", "Target Date", "Note"})
 
 		// Check if the next patch release is in the Previous Patch list, if yes dont read in the output
 		if !patchReleaseInPreviousList(releaseSchedule.Next.Release, releaseSchedule.PreviousPatches) {
-			table.Append([]string{strings.TrimSpace(releaseSchedule.Next.Release), strings.TrimSpace(releaseSchedule.Next.CherryPickDeadline), strings.TrimSpace(releaseSchedule.Next.TargetDate), ""})
+			_ = table.Append([]string{strings.TrimSpace(releaseSchedule.Next.Release), strings.TrimSpace(releaseSchedule.Next.CherryPickDeadline), strings.TrimSpace(releaseSchedule.Next.TargetDate), ""})
 		}
 
 		for _, previous := range releaseSchedule.PreviousPatches {
-			table.Append([]string{strings.TrimSpace(previous.Release), strings.TrimSpace(previous.CherryPickDeadline), strings.TrimSpace(previous.TargetDate), strings.TrimSpace(previous.Note)})
+			_ = table.Append([]string{strings.TrimSpace(previous.Release), strings.TrimSpace(previous.CherryPickDeadline), strings.TrimSpace(previous.TargetDate), strings.TrimSpace(previous.Note)})
 		}
 
-		table.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
-		table.SetCenterSeparator("|")
-		table.Render()
+		_ = table.Render()
 
 		output = append(output, tableString.String())
 	}
@@ -107,7 +102,7 @@ func parsePatchSchedule(patchSchedule PatchSchedule) string {
 }
 
 // runs with `--type=release` to return the release cycle schedule.
-func parseReleaseSchedule(releaseSchedule ReleaseSchedule) string {
+func parseReleaseSchedule(releaseSchedule ReleaseSchedule) (string, error) {
 	type RelSched struct {
 		K8VersionWithDot    string
 		K8VersionWithoutDot string
@@ -131,26 +126,25 @@ func parseReleaseSchedule(releaseSchedule ReleaseSchedule) string {
 
 	for _, releaseSchedule := range releaseSchedule.Releases {
 		tableString := &strings.Builder{}
-		table := tablewriter.NewWriter(tableString)
-		table.SetAutoWrapText(false)
-		table.SetHeader([]string{"**What**", "**Who**", "**When**", "**WEEK**", "**CI Signal**"})
+		table := helpers.NewTableWriterWithDefaultsAndHeader(tableString, []string{"**What**", "**Who**", "**When**", "**WEEK**", "**CI Signal**"})
 
 		for _, timeline := range releaseSchedule.Timeline {
-			table.Append([]string{strings.TrimSpace(timeline.What), strings.TrimSpace(timeline.Who), strings.TrimSpace(timeline.When), strings.TrimSpace(timeline.Week), strings.TrimSpace(timeline.CISignal), ""})
+			_ = table.Append([]string{strings.TrimSpace(timeline.What), strings.TrimSpace(timeline.Who), strings.TrimSpace(timeline.When), strings.TrimSpace(timeline.Week), strings.TrimSpace(timeline.CISignal), ""})
 		}
 
-		table.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
-		table.SetCenterSeparator("|")
-		table.Render()
+		_ = table.Render()
 
 		relSched.TimelineOutput = tableString.String()
 	}
 
-	scheduleOut := processFile("templates/rel-schedule.tmpl", relSched)
+	scheduleOut, err := processFile("templates/rel-schedule.tmpl", relSched)
+	if err != nil {
+		return "", fmt.Errorf("processing release schedule template: %w", err)
+	}
 
 	logrus.Info("Release Schedule parsed")
 
-	return scheduleOut
+	return scheduleOut, nil
 }
 
 func patchReleaseInPreviousList(a string, previousPatches []*PatchRelease) bool {
@@ -169,21 +163,20 @@ func removeDotfromVersion(a string) string {
 
 // process applies the data structure 'vars' onto an already
 // parsed template 't', and returns the resulting string.
-func process(t *template.Template, vars interface{}) string {
+func process(t *template.Template, vars any) (string, error) {
 	var tmplBytes bytes.Buffer
 
-	err := t.Execute(&tmplBytes, vars)
-	if err != nil {
-		panic(err)
+	if err := t.Execute(&tmplBytes, vars); err != nil {
+		return "", fmt.Errorf("executing template: %w", err)
 	}
 
-	return tmplBytes.String()
+	return tmplBytes.String(), nil
 }
 
-func processFile(fileName string, vars interface{}) string {
+func processFile(fileName string, vars any) (string, error) {
 	tmpl, err := template.ParseFS(tpls, fileName)
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("parsing template %s: %w", fileName, err)
 	}
 
 	return process(tmpl, vars)
@@ -198,15 +191,60 @@ const (
 # schedule-builder -uc data/releases/schedule.yaml -e data/releases/eol.yaml
 ---
 `
+	defaultUpcomingReleases  = 3
+	extendedUpcomingReleases = 4
 )
 
+// isInMaintenanceWindow reports whether refTime sits between sched's
+// maintenanceModeStartDate (inclusive) and endOfLifeDate (exclusive).
+// Unparseable values (commonly "TBD") return false.
+func isInMaintenanceWindow(refTime time.Time, sched *Schedule) bool {
+	if sched == nil || sched.MaintenanceModeStartDate == "" || sched.EndOfLifeDate == "" {
+		return false
+	}
+
+	mms, err := time.Parse(refDate, sched.MaintenanceModeStartDate)
+	if err != nil {
+		return false
+	}
+
+	eol, err := time.Parse(refDate, sched.EndOfLifeDate)
+	if err != nil {
+		return false
+	}
+
+	return !refTime.Before(mms) && refTime.Before(eol)
+}
+
+// confirmExtraUpcoming asks the operator whether to extend the upcoming
+// patch window to 4 entries during a maintenance-mode overlap. Overridable
+// in tests.
+var confirmExtraUpcoming = func(oldest *Schedule) (bool, error) {
+	fmt.Fprintf(os.Stderr,
+		"Oldest supported release %s is in its maintenance window "+
+			"(maintenanceModeStartDate=%s, endOfLifeDate=%s).\n"+
+			"Generate an additional upcoming patch release entry (%d total instead of %d)? [y/N]: ",
+		oldest.Release, oldest.MaintenanceModeStartDate, oldest.EndOfLifeDate,
+		extendedUpcomingReleases, defaultUpcomingReleases)
+
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read confirmation: %w", err)
+	}
+
+	answer := strings.TrimSpace(strings.ToLower(line))
+
+	return answer == "y" || answer == "yes", nil
+}
+
+//nolint:maintidx // complex but acceptable
 func updatePatchSchedule(refTime time.Time, schedule PatchSchedule, eolBranches EolBranches, filePath, eolFilePath string) error {
 	removeSchedules := []int{}
 
 	for i, sched := range schedule.Schedules {
 		for {
-			if sched.Next == nil {
-				logrus.Warnf("Next release not set for %s, skipping", sched.Release)
+			if sched.Next == nil && sched.EndOfLifeDate == "" {
+				logrus.Warnf("Next release and end of life date not set for %s, skipping", sched.Release)
 
 				break
 			}
@@ -223,14 +261,39 @@ func updatePatchSchedule(refTime time.Time, schedule PatchSchedule, eolBranches 
 					break
 				}
 
+				// The branch may have no next release left, for example if the
+				// final patch release already got shipped. In that case fall
+				// back to the latest previous patch and the scheduled end of
+				// life date.
+				var finalPatchRelease string
+
+				endOfLifeDate := sched.EndOfLifeDate
+
+				switch {
+				case sched.Next != nil:
+					finalPatchRelease = sched.Next.Release
+					endOfLifeDate = sched.Next.TargetDate
+				case len(sched.PreviousPatches) > 0:
+					finalPatchRelease = sched.PreviousPatches[0].Release
+				default:
+					return fmt.Errorf("no patch release found for end of life release %s", sched.Release)
+				}
+
 				logrus.Infof("Moving %s to end of life", sched.Release)
 				eolBranches.Branches = append([]*EolBranch{{
 					Release:           sched.Release,
-					FinalPatchRelease: sched.Next.Release,
-					EndOfLifeDate:     sched.Next.TargetDate,
+					FinalPatchRelease: finalPatchRelease,
+					EndOfLifeDate:     endOfLifeDate,
 				}}, eolBranches.Branches...)
 
 				removeSchedules = append(removeSchedules, i)
+
+				break
+			}
+
+			// Not yet past end of life but no next release to advance.
+			if sched.Next == nil {
+				logrus.Warnf("Next release not set for %s, skipping", sched.Release)
 
 				break
 			}
@@ -248,7 +311,7 @@ func updatePatchSchedule(refTime time.Time, schedule PatchSchedule, eolBranches 
 			sched.PreviousPatches = append([]*PatchRelease{sched.Next}, sched.PreviousPatches...)
 
 			// Create a new next release
-			nextReleaseVersion, err := util.TagStringToSemver(sched.Next.Release)
+			nextReleaseVersion, err := helpers.TagStringToSemver(sched.Next.Release)
 			if err != nil {
 				return fmt.Errorf("parse semver version: %w", err)
 			}
@@ -319,12 +382,8 @@ func updatePatchSchedule(refTime time.Time, schedule PatchSchedule, eolBranches 
 	for i, sched := range schedule.Schedules {
 		appendItem := true
 
-		for _, k := range removeSchedules {
-			if i == k {
-				appendItem = false
-
-				break
-			}
+		if slices.Contains(removeSchedules, i) {
+			appendItem = false
 		}
 
 		if appendItem {
@@ -333,6 +392,23 @@ func updatePatchSchedule(refTime time.Time, schedule PatchSchedule, eolBranches 
 	}
 
 	schedule.Schedules = newSchedules
+
+	upcomingCap := defaultUpcomingReleases
+
+	if len(schedule.Schedules) > 0 {
+		oldest := schedule.Schedules[len(schedule.Schedules)-1]
+		if isInMaintenanceWindow(refTime, oldest) {
+			ok, err := confirmExtraUpcoming(oldest)
+			if err != nil {
+				return err
+			}
+
+			if ok {
+				upcomingCap = extendedUpcomingReleases
+				logrus.Infof("Extending upcoming patch window to %d entries while %s is in maintenance mode", extendedUpcomingReleases, oldest.Release)
+			}
+		}
+	}
 
 	newUpcomingReleases := []*PatchRelease{}
 	latestDate := refTime
@@ -355,8 +431,8 @@ func updatePatchSchedule(refTime time.Time, schedule PatchSchedule, eolBranches 
 	}
 
 	for {
-		if len(newUpcomingReleases) >= 3 {
-			logrus.Infof("Got 3 new upcoming releases, not adding any more")
+		if len(newUpcomingReleases) >= upcomingCap {
+			logrus.Infof("Got %d new upcoming releases, not adding any more", upcomingCap)
 
 			break
 		}

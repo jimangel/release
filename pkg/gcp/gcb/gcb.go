@@ -36,7 +36,7 @@ import (
 
 	"sigs.k8s.io/release-sdk/gcli"
 	"sigs.k8s.io/release-sdk/git"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 	utilsversion "sigs.k8s.io/release-utils/version"
 
 	"k8s.io/release/gcb"
@@ -278,7 +278,6 @@ func (g *GCB) Submit() error {
 	logrus.Infof("Running GCB with the following options: %+v", g.options)
 
 	g.options.NoSource = true
-	g.options.DiskSize = release.DefaultDiskSize
 
 	g.options.Async = true
 
@@ -303,7 +302,7 @@ func (g *GCB) Submit() error {
 		if !g.options.NonInteractive {
 			var err error
 
-			_, submit, err = util.Ask(
+			_, submit, err = helpers.Ask(
 				fmt.Sprintf("Really submit a --nomock release job against the %s branch? (yes/no)", g.options.Branch),
 				"yes",
 				3,
@@ -318,10 +317,6 @@ func (g *GCB) Submit() error {
 			gcbSubs["NOMOCK"] = "--" + gcbSubs["NOMOCK_TAG"]
 		}
 	} else {
-		// TODO: Remove once cloudbuild.yaml doesn't strictly require vars to be set.
-		gcbSubs["NOMOCK_TAG"] = ""
-		gcbSubs["NOMOCK"] = ""
-
 		userBucket := strings.ReplaceAll(release.TestBucket, "gcb", gcbSubs["GCP_USER_TAG"])
 
 		userBucketSetErr := os.Setenv("USER_BUCKET", userBucket)
@@ -482,7 +477,7 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket, forceBu
 
 	gcbSubs["BUILDVERSION"] = buildVersion
 
-	buildVersionSemver, err := util.TagStringToSemver(buildVersion)
+	buildVersionSemver, err := helpers.TagStringToSemver(buildVersion)
 	if err != nil {
 		return gcbSubs, fmt.Errorf("parse build version: %w", err)
 	}
@@ -502,7 +497,7 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket, forceBu
 		return nil, fmt.Errorf("generate release version: %w", err)
 	}
 
-	primeSemver, err := util.TagStringToSemver(versions.Prime())
+	primeSemver, err := helpers.TagStringToSemver(versions.Prime())
 	if err != nil {
 		return gcbSubs, fmt.Errorf("parse prime version: %w", err)
 	}
@@ -512,8 +507,17 @@ func (g *GCB) SetGCBSubstitutions(toolOrg, toolRepo, toolRef, gcsBucket, forceBu
 	gcbSubs["PATCH_VERSION_TAG"] = strconv.FormatUint(primeSemver.Patch, 10)
 	gcbSubs["KUBERNETES_VERSION_TAG"] = primeSemver.String()
 
+	// Bucket where the artifacts get staged, mock or production, so that
+	// stage jobs can locate the artifacts to sign.
+	gcbSubs["STAGE_BUCKET"] = gcsBucket
+
 	if g.options.Release {
 		gcbSubs["KUBERNETES_GCS_BUCKET"] = fmt.Sprintf("%s/stage/%s/%s/gcs-stage/%s", gcsBucket, buildVersion, versions.Prime(), versions.Prime())
+		if g.options.NoMock {
+			gcbSubs["FASTLY_SERVICE_NAME"] = "dl.k8s.io"
+		} else {
+			gcbSubs["FASTLY_SERVICE_NAME"] = "dl.k8s.dev"
+		}
 	}
 
 	return gcbSubs, nil

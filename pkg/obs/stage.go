@@ -26,7 +26,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/release-sdk/osc"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 
 	"k8s.io/release/pkg/gcp/gcb"
 	"k8s.io/release/pkg/obs/specs"
@@ -36,6 +36,7 @@ import (
 // stageClient is a client for staging releases.
 //
 //counterfeiter:generate . stageClient
+//nolint:interfacebloat // large interface is by design
 type stageClient interface {
 	// Submit can be used to submit a Google Cloud Build (GCB) job.
 	Submit(stream bool) error
@@ -120,6 +121,7 @@ type defaultStageImpl struct{}
 // stageImpl is the implementation of the stage client.
 //
 //counterfeiter:generate . stageImpl
+//nolint:interfacebloat // large interface is by design
 type stageImpl interface {
 	Submit(options *gcb.Options) error
 	CheckPrerequisites(workspaceDir string) error
@@ -170,6 +172,7 @@ func (d *defaultStageImpl) RemovePackageFiles(path string) error {
 
 		logrus.Infof("Removing path: %s", fullPath)
 
+		//nolint:gosec // G122: paths come from walking a trusted, locally-prepared package directory
 		return os.RemoveAll(fullPath)
 	})
 }
@@ -333,7 +336,7 @@ func (d *DefaultStage) GeneratePackageVersion() {
 		d.state.packageVersion = d.options.Version
 	} else {
 		// TODO(xmudrii): We probably want to build non prime versions as well?
-		d.state.packageVersion = util.TrimTagPrefix(d.state.versions.Prime())
+		d.state.packageVersion = helpers.TrimTagPrefix(d.state.versions.Prime())
 	}
 
 	logrus.Infof("Using package version: %s", d.state.packageVersion)
@@ -350,7 +353,7 @@ func (d *DefaultStage) GenerateOBSProject() error {
 		return nil
 	}
 
-	primeSemver, err := util.TagStringToSemver(d.state.versions.Prime())
+	primeSemver, err := helpers.TagStringToSemver(d.state.versions.Prime())
 	if err != nil {
 		return fmt.Errorf("parsing prime version as semver: %w", err)
 	}

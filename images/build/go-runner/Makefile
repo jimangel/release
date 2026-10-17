@@ -17,15 +17,15 @@ include $(CURDIR)/../../Makefile.common-image
 
 IMGNAME = go-runner
 APP_VERSION = $(shell cat VERSION)
-GO_MAJOR_VERSION ?= 1.24
+GO_MAJOR_VERSION ?= 1.27
 REVISION ?= 0
-GO_VERSION ?= 1.24.5
-OS_CODENAME ?= bookworm
+GO_VERSION ?= 1.27.2
+OS_CODENAME ?= bookworm-slim
 
 # Build args
 DISTROLESS_REGISTRY ?= gcr.io/distroless
-DISTROLESS_IMAGE ?= static-debian12
-BUILDER_IMAGE ?= golang:$(GO_VERSION)-$(OS_CODENAME)
+DISTROLESS_IMAGE ?= static-debian13
+BUILDER_IMAGE ?= debian:$(OS_CODENAME)
 
 # Configuration
 CONFIG = go$(GO_MAJOR_VERSION)-$(OS_CODENAME)
@@ -33,7 +33,7 @@ BUILD_METADATA = go$(GO_VERSION)-$(OS_CODENAME).$(REVISION)
 
 IMAGE_VERSION = $(APP_VERSION)-$(BUILD_METADATA)
 
-PLATFORMS ?= linux/amd64 linux/arm64 linux/arm linux/ppc64le linux/s390x
+PLATFORMS ?= linux/amd64 linux/arm64 linux/ppc64le linux/s390x
 
 HOST_GOOS ?= $(shell go env GOOS)
 HOST_GOARCH ?= $(shell go env GOARCH)
@@ -53,4 +53,5 @@ clean:
 	rm go-runner
 
 BUILD_ARGS = --build-arg=BUILDER_IMAGE=$(BUILDER_IMAGE) \
-             --build-arg=DISTROLESS_IMAGE=$(DISTROLESS_REGISTRY)/$(DISTROLESS_IMAGE)
+             --build-arg=DISTROLESS_IMAGE=$(DISTROLESS_REGISTRY)/$(DISTROLESS_IMAGE) \
+             --build-arg=GO_VERSION=$(GO_VERSION)

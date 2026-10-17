@@ -6,12 +6,12 @@ timeout: 1200s
 # this prevents errors if you don't use both _GIT_TAG and _PULL_BASE_REF,
 # or any new substitutions added in the future.
 options:
-  substitution_option: ALLOW_LOOSE
-  machineType: 'N1_HIGHCPU_8'
+  substitutionOption: ALLOW_LOOSE
+  machineType: 'E2_HIGHCPU_32'
 
 steps:
   # TODO: Update image version
-  - name: 'gcr.io/k8s-staging-test-infra/gcb-docker-gcloud:v20210917-12df099d55'
+  - name: 'gcr.io/k8s-staging-test-infra/gcb-docker-gcloud:v20260205-38cfa9523f'
     entrypoint: 'bash'
     dir: ./images/releng/k8s-ci-builder
     env:

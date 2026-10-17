@@ -17,26 +17,25 @@ limitations under the License.
 package build
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	maps0 "maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/olekukonko/tablewriter"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/api/cloudbuild/v1"
-	"google.golang.org/api/option"
 
 	"sigs.k8s.io/release-sdk/gcli"
 	"sigs.k8s.io/release-sdk/object"
 	"sigs.k8s.io/release-utils/command"
+	"sigs.k8s.io/release-utils/helpers"
 	"sigs.k8s.io/release-utils/tar"
 	"sigs.k8s.io/yaml"
 
@@ -62,7 +61,6 @@ type Options struct {
 	AllowDirty     bool
 	NoSource       bool
 	Async          bool
-	DiskSize       string
 	Variant        string
 	EnvPassthrough string
 }
@@ -195,6 +193,7 @@ func RunSingleJob(o *Options, jobName, uploaded, version string, subs map[string
 	args := []string{
 		"builds", "submit",
 		"--verbosity", "info",
+		"--region", "us-central1",
 		"--config", o.CloudbuildFile,
 		"--substitutions", strings.Join(s, ","),
 	}
@@ -227,22 +226,6 @@ func RunSingleJob(o *Options, jobName, uploaded, version string, subs map[string
 		}
 	}
 
-	if o.DiskSize != "" {
-		diskSizeInt, intErr := strconv.Atoi(o.DiskSize)
-		if intErr != nil {
-			return intErr
-		}
-
-		if diskSizeInt > 1000 {
-			return errors.New("selected disk size must be no greater than 1000 GB")
-		} else if diskSizeInt <= 0 {
-			return errors.New("selected disk size must be greater than 0 GB")
-		}
-
-		diskSizeArg := "--disk-size=" + o.DiskSize
-		args = append(args, diskSizeArg)
-	}
-
 	cmd := command.New(gcli.GCloudExecutable, args...)
 
 	if o.LogDir != "" {
@@ -254,6 +237,7 @@ func RunSingleJob(o *Options, jobName, uploaded, version string, subs map[string
 		}
 
 		defer f.Close()
+
 		cmd.AddWriter(f)
 	}
 
@@ -279,7 +263,7 @@ func getVariants(o *Options) (variants, error) {
 			return nil, fmt.Errorf("no variants.yaml found, but a build variant (%q) was specified: %w", o.Variant, err)
 		}
 
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentional nil,nil return
 	}
 
 	v := struct {
@@ -362,6 +346,7 @@ func RunBuildJobs(o *Options) []error {
 	for k, v := range vs {
 		go func(job string, vc map[string]string) {
 			defer w.Done()
+
 			logrus.Infof("Starting job %q...", job)
 
 			if err := RunSingleJob(o, job, uploaded, tag, mergeMaps(extraSubs, vc)); err != nil {
@@ -382,9 +367,7 @@ func mergeMaps(maps ...map[string]string) map[string]string {
 	out := map[string]string{}
 
 	for _, m := range maps {
-		for k, v := range m {
-			out[k] = v
-		}
+		maps0.Copy(out, m)
 	}
 
 	return out
@@ -392,9 +375,8 @@ func mergeMaps(maps ...map[string]string) map[string]string {
 
 func ListJobs(project string, lastJobs int64) error {
 	ctx := context.Background()
-	opts := option.WithCredentialsFile("")
 
-	service, err := cloudbuild.NewService(ctx, opts)
+	service, err := cloudbuild.NewService(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetching gcloud credentials... try running \"gcloud auth application-default login\": %w", err)
 	}
@@ -404,31 +386,50 @@ func ListJobs(project string, lastJobs int64) error {
 		return fmt.Errorf("failed to listing the builds: %w", err)
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Start Time", "Finish Time", "Status", "Console Logs"})
+	table := helpers.NewTableWriterWithDefaultsAndHeader(os.Stdout, []string{"Start Time", "Finish Time", "Status", "Console Logs"})
 
 	for _, build := range req.Builds {
-		table.Append([]string{strings.TrimSpace(build.StartTime), strings.TrimSpace(build.FinishTime), strings.TrimSpace(build.Status), strings.TrimSpace(build.LogUrl)})
+		_ = table.Append([]string{strings.TrimSpace(build.StartTime), strings.TrimSpace(build.FinishTime), strings.TrimSpace(build.Status), strings.TrimSpace(build.LogUrl)})
 	}
 
-	table.Render()
+	_ = table.Render()
 
 	return nil
 }
 
 func GetJobsByTag(project, tagsFilter string) ([]*cloudbuild.Build, error) {
 	ctx := context.Background()
-	opts := option.WithCredentialsFile("")
 
-	service, err := cloudbuild.NewService(ctx, opts)
+	service, err := cloudbuild.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetching gcloud credentials... try running \"gcloud auth application-default login\": %w", err)
 	}
 
-	req, err := service.Projects.Builds.List(project).Filter(tagsFilter).PageSize(50).Do()
-	if err != nil {
-		return nil, fmt.Errorf("failed to listing the builds: %w", err)
+	parent := fmt.Sprintf("projects/%s/locations/us-central1", project)
+
+	var allBuilds []*cloudbuild.Build
+
+	pageToken := ""
+
+	for {
+		call := service.Projects.Locations.Builds.List(parent).Filter(tagsFilter).PageSize(50)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+
+		resp, err := call.Do()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list the builds: %w", err)
+		}
+
+		allBuilds = append(allBuilds, resp.Builds...)
+
+		if resp.NextPageToken == "" {
+			break
+		}
+
+		pageToken = resp.NextPageToken
 	}
 
-	return req.Builds, nil
+	return allBuilds, nil
 }

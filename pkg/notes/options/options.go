@@ -75,6 +75,11 @@ type Options struct {
 	// release notes.
 	SkipFirstCommit bool
 
+	// OriginalStartSHA is the unmodified start SHA before SkipFirstCommit
+	// advances it. Used for merge base calculation in listLeftParentCommits
+	// because the skipped-to commit may not be on the first-parent chain.
+	OriginalStartSHA string
+
 	// Format specifies the format of the release notes. Can be either
 	// `json` or `markdown`.
 	Format string
@@ -83,10 +88,6 @@ type Options struct {
 	// template. Can be `go-template:default`, `go-template:<file.template>` or
 	// `go-template:inline:<template>`.
 	GoTemplate string
-
-	// RequiredAuthor can be used to filter the release notes by the commit
-	// author
-	RequiredAuthor string
 
 	// DiscoverMode can be used to automatically discover StartSHA and EndSHA.
 	// Can be either RevisionDiscoveryModeNONE (default),
@@ -112,9 +113,6 @@ type Options struct {
 	// log level
 	Debug bool
 
-	// EXPERIMENTAL: Feature flag for using v2 implementation to list commits
-	ListReleaseNotesV2 bool
-
 	// RecordDir specifies the directory for API call recordings. Cannot be
 	// used together with ReplayDir.
 	RecordDir string
@@ -133,6 +131,9 @@ type Options struct {
 	// This is useful when the release notes are outputted to a file. When using the GitHub release page to publish release notes,
 	// this option should be set to false to take advantage of Github's autolinked references.
 	AddMarkdownLinks bool
+
+	// IncludeLabels can be used to filter PRs by labels so only PRs with one or more specified labels are included.
+	IncludeLabels []string
 }
 
 type RevisionDiscoveryMode string
@@ -167,6 +168,7 @@ func New() *Options {
 		gitCloneFn:         git.CloneOrOpenGitHubRepo,
 		MapProviderStrings: []string{},
 		AddMarkdownLinks:   false,
+		IncludeLabels:      []string{},
 	}
 }
 
@@ -183,22 +185,19 @@ func (o *Options) ValidateAndFinish() (err error) {
 		return errors.New("please do not use record and replay together")
 	}
 
-	// Recover for replay if needed
 	if o.ReplayDir != "" {
 		logrus.Info("Using replay mode")
-
-		return nil
-	}
-
-	// The GitHub Token is required if replay is not specified
-	token, ok := os.LookupEnv(github.TokenEnvKey)
-	if ok {
-		o.githubToken = token
-	} else if o.ReplayDir == "" {
-		return fmt.Errorf(
-			"neither environment variable `%s` nor `replay` option is set",
-			github.TokenEnvKey,
-		)
+	} else {
+		// The GitHub Token is required if replay is not specified
+		token, ok := os.LookupEnv(github.TokenEnvKey)
+		if ok {
+			o.githubToken = token
+		} else {
+			return fmt.Errorf(
+				"neither environment variable `%s` nor `replay` option is set",
+				github.TokenEnvKey,
+			)
+		}
 	}
 
 	// Set RepoPath to <tempdir>/<gh-org>-<gh-repo> if empty
@@ -243,6 +242,8 @@ func (o *Options) ValidateAndFinish() (err error) {
 			if o.SkipFirstCommit {
 				logrus.Infof("Skipping first commit: %s", sha)
 
+				o.OriginalStartSHA = sha
+
 				sha, err = repo.NextCommit(sha, git.DefaultRemote+"/"+o.Branch)
 				if err != nil {
 					return fmt.Errorf("getting the next repo commit: %w", err)
@@ -283,6 +284,37 @@ func (o *Options) ValidateAndFinish() (err error) {
 	}
 
 	return nil
+}
+
+// Client returns a Client to be used by the Gatherer. Depending on
+// the provided options this is either a real client talking to the GitHub API,
+// a Client which in addition records the responses from Github and stores them
+// on disk, or a Client that replays those pre-recorded responses and does not
+// talk to the GitHub API at all.
+func (o *Options) Client() (github.Client, error) { //nolint:ireturn // returning interface is intentional
+	if o.ReplayDir != "" {
+		return github.NewReplayer(o.ReplayDir), nil
+	}
+
+	var gh *github.GitHub
+
+	var err error
+	// Create a real GitHub API client
+	if o.GithubBaseURL != "" && o.GithubUploadURL != "" {
+		gh, err = github.NewEnterpriseWithToken(o.GithubBaseURL, o.GithubUploadURL, o.githubToken)
+	} else {
+		gh, err = github.NewWithToken(o.githubToken)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to create GitHub client: %w", err)
+	}
+
+	if o.RecordDir != "" {
+		return github.NewRecorder(gh.Client(), o.RecordDir), nil
+	}
+
+	return gh.Client(), nil
 }
 
 // checkFormatOptions verifies that template related options are sane.
@@ -379,35 +411,4 @@ func (o *Options) repo() (repo *git.Repo, err error) {
 	}
 
 	return repo, nil
-}
-
-// Client returns a Client to be used by the Gatherer. Depending on
-// the provided options this is either a real client talking to the GitHub API,
-// a Client which in addition records the responses from Github and stores them
-// on disk, or a Client that replays those pre-recorded responses and does not
-// talk to the GitHub API at all.
-func (o *Options) Client() (github.Client, error) {
-	if o.ReplayDir != "" {
-		return github.NewReplayer(o.ReplayDir), nil
-	}
-
-	var gh *github.GitHub
-
-	var err error
-	// Create a real GitHub API client
-	if o.GithubBaseURL != "" && o.GithubUploadURL != "" {
-		gh, err = github.NewEnterpriseWithToken(o.GithubBaseURL, o.GithubUploadURL, o.githubToken)
-	} else {
-		gh, err = github.NewWithToken(o.githubToken)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("unable to create GitHub client: %w", err)
-	}
-
-	if o.RecordDir != "" {
-		return github.NewRecorder(gh.Client(), o.RecordDir), nil
-	}
-
-	return gh.Client(), nil
 }

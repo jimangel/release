@@ -21,13 +21,13 @@ import (
 	"sync"
 
 	semver "github.com/blang/semver/v4"
-	"github.com/in-toto/in-toto-golang/in_toto"
+	v1 "github.com/in-toto/attestation/go/v1"
 	"k8s.io/release/pkg/anago"
 	"k8s.io/release/pkg/build"
 	"k8s.io/release/pkg/changelog"
 	"k8s.io/release/pkg/gcp/gcb"
 	"k8s.io/release/pkg/release"
-	"sigs.k8s.io/bom/pkg/provenance"
+	"sigs.k8s.io/bom/pkg/bom"
 	"sigs.k8s.io/bom/pkg/spdx"
 	"sigs.k8s.io/release-sdk/git"
 )
@@ -72,10 +72,10 @@ type FakeStageImpl struct {
 		result1 bool
 		result2 error
 	}
-	BuildBaseArtifactsSBOMStub        func(*spdx.DocGenerateOptions) (*spdx.Document, error)
+	BuildBaseArtifactsSBOMStub        func(*bom.GenerateOptions) (*spdx.Document, error)
 	buildBaseArtifactsSBOMMutex       sync.RWMutex
 	buildBaseArtifactsSBOMArgsForCall []struct {
-		arg1 *spdx.DocGenerateOptions
+		arg1 *bom.GenerateOptions
 	}
 	buildBaseArtifactsSBOMReturns struct {
 		result1 *spdx.Document
@@ -131,6 +131,16 @@ type FakeStageImpl struct {
 	commitEmptyReturnsOnCall map[int]struct {
 		result1 error
 	}
+	ConfigureDockerStub        func() error
+	configureDockerMutex       sync.RWMutex
+	configureDockerArgsForCall []struct {
+	}
+	configureDockerReturns struct {
+		result1 error
+	}
+	configureDockerReturnsOnCall map[int]struct {
+		result1 error
+	}
 	CurrentBranchStub        func(*git.Repo) (string, error)
 	currentBranchMutex       sync.RWMutex
 	currentBranchArgsForCall []struct {
@@ -166,18 +176,18 @@ type FakeStageImpl struct {
 	dockerHubLoginReturnsOnCall map[int]struct {
 		result1 error
 	}
-	GenerateAttestationStub        func(*anago.StageState, *anago.StageOptions) (*provenance.Statement, error)
+	GenerateAttestationStub        func(*anago.StageState, *anago.StageOptions) (*v1.Statement, error)
 	generateAttestationMutex       sync.RWMutex
 	generateAttestationArgsForCall []struct {
 		arg1 *anago.StageState
 		arg2 *anago.StageOptions
 	}
 	generateAttestationReturns struct {
-		result1 *provenance.Statement
+		result1 *v1.Statement
 		result2 error
 	}
 	generateAttestationReturnsOnCall map[int]struct {
-		result1 *provenance.Statement
+		result1 *v1.Statement
 		result2 error
 	}
 	GenerateChangelogStub        func(*changelog.Options) error
@@ -207,10 +217,10 @@ type FakeStageImpl struct {
 		result1 *release.Versions
 		result2 error
 	}
-	GenerateSourceTreeBOMStub        func(*spdx.DocGenerateOptions) (*spdx.Document, error)
+	GenerateSourceTreeBOMStub        func(*bom.GenerateOptions) (*spdx.Document, error)
 	generateSourceTreeBOMMutex       sync.RWMutex
 	generateSourceTreeBOMArgsForCall []struct {
-		arg1 *spdx.DocGenerateOptions
+		arg1 *bom.GenerateOptions
 	}
 	generateSourceTreeBOMReturns struct {
 		result1 *spdx.Document
@@ -231,7 +241,7 @@ type FakeStageImpl struct {
 	generateVersionArtifactsBOMReturnsOnCall map[int]struct {
 		result1 error
 	}
-	GetOutputDirSubjectsStub        func(*anago.StageOptions, string, string) ([]in_toto.Subject, error)
+	GetOutputDirSubjectsStub        func(*anago.StageOptions, string, string) ([]*v1.ResourceDescriptor, error)
 	getOutputDirSubjectsMutex       sync.RWMutex
 	getOutputDirSubjectsArgsForCall []struct {
 		arg1 *anago.StageOptions
@@ -239,26 +249,37 @@ type FakeStageImpl struct {
 		arg3 string
 	}
 	getOutputDirSubjectsReturns struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}
 	getOutputDirSubjectsReturnsOnCall map[int]struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}
-	GetProvenanceSubjectsStub        func(*anago.StageOptions, string) ([]in_toto.Subject, error)
+	GetProvenanceSubjectsStub        func(*anago.StageOptions, string) ([]*v1.ResourceDescriptor, error)
 	getProvenanceSubjectsMutex       sync.RWMutex
 	getProvenanceSubjectsArgsForCall []struct {
 		arg1 *anago.StageOptions
 		arg2 string
 	}
 	getProvenanceSubjectsReturns struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}
 	getProvenanceSubjectsReturnsOnCall map[int]struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
+	}
+	GoModDownloadStub        func(string) error
+	goModDownloadMutex       sync.RWMutex
+	goModDownloadArgsForCall []struct {
+		arg1 string
+	}
+	goModDownloadReturns struct {
+		result1 error
+	}
+	goModDownloadReturnsOnCall map[int]struct {
+		result1 error
 	}
 	ListBinariesStub func(string) ([]struct {
 		Path     string
@@ -358,10 +379,10 @@ type FakeStageImpl struct {
 	prepareWorkspaceStageReturnsOnCall map[int]struct {
 		result1 error
 	}
-	PushAttestationStub        func(*provenance.Statement, *anago.StageOptions) error
+	PushAttestationStub        func(*v1.Statement, *anago.StageOptions) error
 	pushAttestationMutex       sync.RWMutex
 	pushAttestationArgsForCall []struct {
-		arg1 *provenance.Statement
+		arg1 *v1.Statement
 		arg2 *anago.StageOptions
 	}
 	pushAttestationReturns struct {
@@ -698,11 +719,11 @@ func (fake *FakeStageImpl) BranchNeedsCreationReturnsOnCall(i int, result1 bool,
 	}{result1, result2}
 }
 
-func (fake *FakeStageImpl) BuildBaseArtifactsSBOM(arg1 *spdx.DocGenerateOptions) (*spdx.Document, error) {
+func (fake *FakeStageImpl) BuildBaseArtifactsSBOM(arg1 *bom.GenerateOptions) (*spdx.Document, error) {
 	fake.buildBaseArtifactsSBOMMutex.Lock()
 	ret, specificReturn := fake.buildBaseArtifactsSBOMReturnsOnCall[len(fake.buildBaseArtifactsSBOMArgsForCall)]
 	fake.buildBaseArtifactsSBOMArgsForCall = append(fake.buildBaseArtifactsSBOMArgsForCall, struct {
-		arg1 *spdx.DocGenerateOptions
+		arg1 *bom.GenerateOptions
 	}{arg1})
 	stub := fake.BuildBaseArtifactsSBOMStub
 	fakeReturns := fake.buildBaseArtifactsSBOMReturns
@@ -723,13 +744,13 @@ func (fake *FakeStageImpl) BuildBaseArtifactsSBOMCallCount() int {
 	return len(fake.buildBaseArtifactsSBOMArgsForCall)
 }
 
-func (fake *FakeStageImpl) BuildBaseArtifactsSBOMCalls(stub func(*spdx.DocGenerateOptions) (*spdx.Document, error)) {
+func (fake *FakeStageImpl) BuildBaseArtifactsSBOMCalls(stub func(*bom.GenerateOptions) (*spdx.Document, error)) {
 	fake.buildBaseArtifactsSBOMMutex.Lock()
 	defer fake.buildBaseArtifactsSBOMMutex.Unlock()
 	fake.BuildBaseArtifactsSBOMStub = stub
 }
 
-func (fake *FakeStageImpl) BuildBaseArtifactsSBOMArgsForCall(i int) *spdx.DocGenerateOptions {
+func (fake *FakeStageImpl) BuildBaseArtifactsSBOMArgsForCall(i int) *bom.GenerateOptions {
 	fake.buildBaseArtifactsSBOMMutex.RLock()
 	defer fake.buildBaseArtifactsSBOMMutex.RUnlock()
 	argsForCall := fake.buildBaseArtifactsSBOMArgsForCall[i]
@@ -1001,6 +1022,59 @@ func (fake *FakeStageImpl) CommitEmptyReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
+func (fake *FakeStageImpl) ConfigureDocker() error {
+	fake.configureDockerMutex.Lock()
+	ret, specificReturn := fake.configureDockerReturnsOnCall[len(fake.configureDockerArgsForCall)]
+	fake.configureDockerArgsForCall = append(fake.configureDockerArgsForCall, struct {
+	}{})
+	stub := fake.ConfigureDockerStub
+	fakeReturns := fake.configureDockerReturns
+	fake.recordInvocation("ConfigureDocker", []interface{}{})
+	fake.configureDockerMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeStageImpl) ConfigureDockerCallCount() int {
+	fake.configureDockerMutex.RLock()
+	defer fake.configureDockerMutex.RUnlock()
+	return len(fake.configureDockerArgsForCall)
+}
+
+func (fake *FakeStageImpl) ConfigureDockerCalls(stub func() error) {
+	fake.configureDockerMutex.Lock()
+	defer fake.configureDockerMutex.Unlock()
+	fake.ConfigureDockerStub = stub
+}
+
+func (fake *FakeStageImpl) ConfigureDockerReturns(result1 error) {
+	fake.configureDockerMutex.Lock()
+	defer fake.configureDockerMutex.Unlock()
+	fake.ConfigureDockerStub = nil
+	fake.configureDockerReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeStageImpl) ConfigureDockerReturnsOnCall(i int, result1 error) {
+	fake.configureDockerMutex.Lock()
+	defer fake.configureDockerMutex.Unlock()
+	fake.ConfigureDockerStub = nil
+	if fake.configureDockerReturnsOnCall == nil {
+		fake.configureDockerReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.configureDockerReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *FakeStageImpl) CurrentBranch(arg1 *git.Repo) (string, error) {
 	fake.currentBranchMutex.Lock()
 	ret, specificReturn := fake.currentBranchReturnsOnCall[len(fake.currentBranchArgsForCall)]
@@ -1180,7 +1254,7 @@ func (fake *FakeStageImpl) DockerHubLoginReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *FakeStageImpl) GenerateAttestation(arg1 *anago.StageState, arg2 *anago.StageOptions) (*provenance.Statement, error) {
+func (fake *FakeStageImpl) GenerateAttestation(arg1 *anago.StageState, arg2 *anago.StageOptions) (*v1.Statement, error) {
 	fake.generateAttestationMutex.Lock()
 	ret, specificReturn := fake.generateAttestationReturnsOnCall[len(fake.generateAttestationArgsForCall)]
 	fake.generateAttestationArgsForCall = append(fake.generateAttestationArgsForCall, struct {
@@ -1206,7 +1280,7 @@ func (fake *FakeStageImpl) GenerateAttestationCallCount() int {
 	return len(fake.generateAttestationArgsForCall)
 }
 
-func (fake *FakeStageImpl) GenerateAttestationCalls(stub func(*anago.StageState, *anago.StageOptions) (*provenance.Statement, error)) {
+func (fake *FakeStageImpl) GenerateAttestationCalls(stub func(*anago.StageState, *anago.StageOptions) (*v1.Statement, error)) {
 	fake.generateAttestationMutex.Lock()
 	defer fake.generateAttestationMutex.Unlock()
 	fake.GenerateAttestationStub = stub
@@ -1219,28 +1293,28 @@ func (fake *FakeStageImpl) GenerateAttestationArgsForCall(i int) (*anago.StageSt
 	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *FakeStageImpl) GenerateAttestationReturns(result1 *provenance.Statement, result2 error) {
+func (fake *FakeStageImpl) GenerateAttestationReturns(result1 *v1.Statement, result2 error) {
 	fake.generateAttestationMutex.Lock()
 	defer fake.generateAttestationMutex.Unlock()
 	fake.GenerateAttestationStub = nil
 	fake.generateAttestationReturns = struct {
-		result1 *provenance.Statement
+		result1 *v1.Statement
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeStageImpl) GenerateAttestationReturnsOnCall(i int, result1 *provenance.Statement, result2 error) {
+func (fake *FakeStageImpl) GenerateAttestationReturnsOnCall(i int, result1 *v1.Statement, result2 error) {
 	fake.generateAttestationMutex.Lock()
 	defer fake.generateAttestationMutex.Unlock()
 	fake.GenerateAttestationStub = nil
 	if fake.generateAttestationReturnsOnCall == nil {
 		fake.generateAttestationReturnsOnCall = make(map[int]struct {
-			result1 *provenance.Statement
+			result1 *v1.Statement
 			result2 error
 		})
 	}
 	fake.generateAttestationReturnsOnCall[i] = struct {
-		result1 *provenance.Statement
+		result1 *v1.Statement
 		result2 error
 	}{result1, result2}
 }
@@ -1373,11 +1447,11 @@ func (fake *FakeStageImpl) GenerateReleaseVersionReturnsOnCall(i int, result1 *r
 	}{result1, result2}
 }
 
-func (fake *FakeStageImpl) GenerateSourceTreeBOM(arg1 *spdx.DocGenerateOptions) (*spdx.Document, error) {
+func (fake *FakeStageImpl) GenerateSourceTreeBOM(arg1 *bom.GenerateOptions) (*spdx.Document, error) {
 	fake.generateSourceTreeBOMMutex.Lock()
 	ret, specificReturn := fake.generateSourceTreeBOMReturnsOnCall[len(fake.generateSourceTreeBOMArgsForCall)]
 	fake.generateSourceTreeBOMArgsForCall = append(fake.generateSourceTreeBOMArgsForCall, struct {
-		arg1 *spdx.DocGenerateOptions
+		arg1 *bom.GenerateOptions
 	}{arg1})
 	stub := fake.GenerateSourceTreeBOMStub
 	fakeReturns := fake.generateSourceTreeBOMReturns
@@ -1398,13 +1472,13 @@ func (fake *FakeStageImpl) GenerateSourceTreeBOMCallCount() int {
 	return len(fake.generateSourceTreeBOMArgsForCall)
 }
 
-func (fake *FakeStageImpl) GenerateSourceTreeBOMCalls(stub func(*spdx.DocGenerateOptions) (*spdx.Document, error)) {
+func (fake *FakeStageImpl) GenerateSourceTreeBOMCalls(stub func(*bom.GenerateOptions) (*spdx.Document, error)) {
 	fake.generateSourceTreeBOMMutex.Lock()
 	defer fake.generateSourceTreeBOMMutex.Unlock()
 	fake.GenerateSourceTreeBOMStub = stub
 }
 
-func (fake *FakeStageImpl) GenerateSourceTreeBOMArgsForCall(i int) *spdx.DocGenerateOptions {
+func (fake *FakeStageImpl) GenerateSourceTreeBOMArgsForCall(i int) *bom.GenerateOptions {
 	fake.generateSourceTreeBOMMutex.RLock()
 	defer fake.generateSourceTreeBOMMutex.RUnlock()
 	argsForCall := fake.generateSourceTreeBOMArgsForCall[i]
@@ -1498,7 +1572,7 @@ func (fake *FakeStageImpl) GenerateVersionArtifactsBOMReturnsOnCall(i int, resul
 	}{result1}
 }
 
-func (fake *FakeStageImpl) GetOutputDirSubjects(arg1 *anago.StageOptions, arg2 string, arg3 string) ([]in_toto.Subject, error) {
+func (fake *FakeStageImpl) GetOutputDirSubjects(arg1 *anago.StageOptions, arg2 string, arg3 string) ([]*v1.ResourceDescriptor, error) {
 	fake.getOutputDirSubjectsMutex.Lock()
 	ret, specificReturn := fake.getOutputDirSubjectsReturnsOnCall[len(fake.getOutputDirSubjectsArgsForCall)]
 	fake.getOutputDirSubjectsArgsForCall = append(fake.getOutputDirSubjectsArgsForCall, struct {
@@ -1525,7 +1599,7 @@ func (fake *FakeStageImpl) GetOutputDirSubjectsCallCount() int {
 	return len(fake.getOutputDirSubjectsArgsForCall)
 }
 
-func (fake *FakeStageImpl) GetOutputDirSubjectsCalls(stub func(*anago.StageOptions, string, string) ([]in_toto.Subject, error)) {
+func (fake *FakeStageImpl) GetOutputDirSubjectsCalls(stub func(*anago.StageOptions, string, string) ([]*v1.ResourceDescriptor, error)) {
 	fake.getOutputDirSubjectsMutex.Lock()
 	defer fake.getOutputDirSubjectsMutex.Unlock()
 	fake.GetOutputDirSubjectsStub = stub
@@ -1538,33 +1612,33 @@ func (fake *FakeStageImpl) GetOutputDirSubjectsArgsForCall(i int) (*anago.StageO
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
-func (fake *FakeStageImpl) GetOutputDirSubjectsReturns(result1 []in_toto.Subject, result2 error) {
+func (fake *FakeStageImpl) GetOutputDirSubjectsReturns(result1 []*v1.ResourceDescriptor, result2 error) {
 	fake.getOutputDirSubjectsMutex.Lock()
 	defer fake.getOutputDirSubjectsMutex.Unlock()
 	fake.GetOutputDirSubjectsStub = nil
 	fake.getOutputDirSubjectsReturns = struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeStageImpl) GetOutputDirSubjectsReturnsOnCall(i int, result1 []in_toto.Subject, result2 error) {
+func (fake *FakeStageImpl) GetOutputDirSubjectsReturnsOnCall(i int, result1 []*v1.ResourceDescriptor, result2 error) {
 	fake.getOutputDirSubjectsMutex.Lock()
 	defer fake.getOutputDirSubjectsMutex.Unlock()
 	fake.GetOutputDirSubjectsStub = nil
 	if fake.getOutputDirSubjectsReturnsOnCall == nil {
 		fake.getOutputDirSubjectsReturnsOnCall = make(map[int]struct {
-			result1 []in_toto.Subject
+			result1 []*v1.ResourceDescriptor
 			result2 error
 		})
 	}
 	fake.getOutputDirSubjectsReturnsOnCall[i] = struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeStageImpl) GetProvenanceSubjects(arg1 *anago.StageOptions, arg2 string) ([]in_toto.Subject, error) {
+func (fake *FakeStageImpl) GetProvenanceSubjects(arg1 *anago.StageOptions, arg2 string) ([]*v1.ResourceDescriptor, error) {
 	fake.getProvenanceSubjectsMutex.Lock()
 	ret, specificReturn := fake.getProvenanceSubjectsReturnsOnCall[len(fake.getProvenanceSubjectsArgsForCall)]
 	fake.getProvenanceSubjectsArgsForCall = append(fake.getProvenanceSubjectsArgsForCall, struct {
@@ -1590,7 +1664,7 @@ func (fake *FakeStageImpl) GetProvenanceSubjectsCallCount() int {
 	return len(fake.getProvenanceSubjectsArgsForCall)
 }
 
-func (fake *FakeStageImpl) GetProvenanceSubjectsCalls(stub func(*anago.StageOptions, string) ([]in_toto.Subject, error)) {
+func (fake *FakeStageImpl) GetProvenanceSubjectsCalls(stub func(*anago.StageOptions, string) ([]*v1.ResourceDescriptor, error)) {
 	fake.getProvenanceSubjectsMutex.Lock()
 	defer fake.getProvenanceSubjectsMutex.Unlock()
 	fake.GetProvenanceSubjectsStub = stub
@@ -1603,30 +1677,91 @@ func (fake *FakeStageImpl) GetProvenanceSubjectsArgsForCall(i int) (*anago.Stage
 	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *FakeStageImpl) GetProvenanceSubjectsReturns(result1 []in_toto.Subject, result2 error) {
+func (fake *FakeStageImpl) GetProvenanceSubjectsReturns(result1 []*v1.ResourceDescriptor, result2 error) {
 	fake.getProvenanceSubjectsMutex.Lock()
 	defer fake.getProvenanceSubjectsMutex.Unlock()
 	fake.GetProvenanceSubjectsStub = nil
 	fake.getProvenanceSubjectsReturns = struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeStageImpl) GetProvenanceSubjectsReturnsOnCall(i int, result1 []in_toto.Subject, result2 error) {
+func (fake *FakeStageImpl) GetProvenanceSubjectsReturnsOnCall(i int, result1 []*v1.ResourceDescriptor, result2 error) {
 	fake.getProvenanceSubjectsMutex.Lock()
 	defer fake.getProvenanceSubjectsMutex.Unlock()
 	fake.GetProvenanceSubjectsStub = nil
 	if fake.getProvenanceSubjectsReturnsOnCall == nil {
 		fake.getProvenanceSubjectsReturnsOnCall = make(map[int]struct {
-			result1 []in_toto.Subject
+			result1 []*v1.ResourceDescriptor
 			result2 error
 		})
 	}
 	fake.getProvenanceSubjectsReturnsOnCall[i] = struct {
-		result1 []in_toto.Subject
+		result1 []*v1.ResourceDescriptor
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *FakeStageImpl) GoModDownload(arg1 string) error {
+	fake.goModDownloadMutex.Lock()
+	ret, specificReturn := fake.goModDownloadReturnsOnCall[len(fake.goModDownloadArgsForCall)]
+	fake.goModDownloadArgsForCall = append(fake.goModDownloadArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.GoModDownloadStub
+	fakeReturns := fake.goModDownloadReturns
+	fake.recordInvocation("GoModDownload", []interface{}{arg1})
+	fake.goModDownloadMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeStageImpl) GoModDownloadCallCount() int {
+	fake.goModDownloadMutex.RLock()
+	defer fake.goModDownloadMutex.RUnlock()
+	return len(fake.goModDownloadArgsForCall)
+}
+
+func (fake *FakeStageImpl) GoModDownloadCalls(stub func(string) error) {
+	fake.goModDownloadMutex.Lock()
+	defer fake.goModDownloadMutex.Unlock()
+	fake.GoModDownloadStub = stub
+}
+
+func (fake *FakeStageImpl) GoModDownloadArgsForCall(i int) string {
+	fake.goModDownloadMutex.RLock()
+	defer fake.goModDownloadMutex.RUnlock()
+	argsForCall := fake.goModDownloadArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeStageImpl) GoModDownloadReturns(result1 error) {
+	fake.goModDownloadMutex.Lock()
+	defer fake.goModDownloadMutex.Unlock()
+	fake.GoModDownloadStub = nil
+	fake.goModDownloadReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeStageImpl) GoModDownloadReturnsOnCall(i int, result1 error) {
+	fake.goModDownloadMutex.Lock()
+	defer fake.goModDownloadMutex.Unlock()
+	fake.GoModDownloadStub = nil
+	if fake.goModDownloadReturnsOnCall == nil {
+		fake.goModDownloadReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.goModDownloadReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *FakeStageImpl) ListBinaries(arg1 string) ([]struct {
@@ -2097,11 +2232,11 @@ func (fake *FakeStageImpl) PrepareWorkspaceStageReturnsOnCall(i int, result1 err
 	}{result1}
 }
 
-func (fake *FakeStageImpl) PushAttestation(arg1 *provenance.Statement, arg2 *anago.StageOptions) error {
+func (fake *FakeStageImpl) PushAttestation(arg1 *v1.Statement, arg2 *anago.StageOptions) error {
 	fake.pushAttestationMutex.Lock()
 	ret, specificReturn := fake.pushAttestationReturnsOnCall[len(fake.pushAttestationArgsForCall)]
 	fake.pushAttestationArgsForCall = append(fake.pushAttestationArgsForCall, struct {
-		arg1 *provenance.Statement
+		arg1 *v1.Statement
 		arg2 *anago.StageOptions
 	}{arg1, arg2})
 	stub := fake.PushAttestationStub
@@ -2123,13 +2258,13 @@ func (fake *FakeStageImpl) PushAttestationCallCount() int {
 	return len(fake.pushAttestationArgsForCall)
 }
 
-func (fake *FakeStageImpl) PushAttestationCalls(stub func(*provenance.Statement, *anago.StageOptions) error) {
+func (fake *FakeStageImpl) PushAttestationCalls(stub func(*v1.Statement, *anago.StageOptions) error) {
 	fake.pushAttestationMutex.Lock()
 	defer fake.pushAttestationMutex.Unlock()
 	fake.PushAttestationStub = stub
 }
 
-func (fake *FakeStageImpl) PushAttestationArgsForCall(i int) (*provenance.Statement, *anago.StageOptions) {
+func (fake *FakeStageImpl) PushAttestationArgsForCall(i int) (*v1.Statement, *anago.StageOptions) {
 	fake.pushAttestationMutex.RLock()
 	defer fake.pushAttestationMutex.RUnlock()
 	argsForCall := fake.pushAttestationArgsForCall[i]
@@ -2853,80 +2988,6 @@ func (fake *FakeStageImpl) WriteSourceBOMReturnsOnCall(i int, result1 error) {
 func (fake *FakeStageImpl) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.addBinariesToSBOMMutex.RLock()
-	defer fake.addBinariesToSBOMMutex.RUnlock()
-	fake.addTarfilesToSBOMMutex.RLock()
-	defer fake.addTarfilesToSBOMMutex.RUnlock()
-	fake.branchNeedsCreationMutex.RLock()
-	defer fake.branchNeedsCreationMutex.RUnlock()
-	fake.buildBaseArtifactsSBOMMutex.RLock()
-	defer fake.buildBaseArtifactsSBOMMutex.RUnlock()
-	fake.checkPrerequisitesMutex.RLock()
-	defer fake.checkPrerequisitesMutex.RUnlock()
-	fake.checkReleaseBucketMutex.RLock()
-	defer fake.checkReleaseBucketMutex.RUnlock()
-	fake.checkoutMutex.RLock()
-	defer fake.checkoutMutex.RUnlock()
-	fake.commitEmptyMutex.RLock()
-	defer fake.commitEmptyMutex.RUnlock()
-	fake.currentBranchMutex.RLock()
-	defer fake.currentBranchMutex.RUnlock()
-	fake.deleteLocalSourceTarballMutex.RLock()
-	defer fake.deleteLocalSourceTarballMutex.RUnlock()
-	fake.dockerHubLoginMutex.RLock()
-	defer fake.dockerHubLoginMutex.RUnlock()
-	fake.generateAttestationMutex.RLock()
-	defer fake.generateAttestationMutex.RUnlock()
-	fake.generateChangelogMutex.RLock()
-	defer fake.generateChangelogMutex.RUnlock()
-	fake.generateReleaseVersionMutex.RLock()
-	defer fake.generateReleaseVersionMutex.RUnlock()
-	fake.generateSourceTreeBOMMutex.RLock()
-	defer fake.generateSourceTreeBOMMutex.RUnlock()
-	fake.generateVersionArtifactsBOMMutex.RLock()
-	defer fake.generateVersionArtifactsBOMMutex.RUnlock()
-	fake.getOutputDirSubjectsMutex.RLock()
-	defer fake.getOutputDirSubjectsMutex.RUnlock()
-	fake.getProvenanceSubjectsMutex.RLock()
-	defer fake.getProvenanceSubjectsMutex.RUnlock()
-	fake.listBinariesMutex.RLock()
-	defer fake.listBinariesMutex.RUnlock()
-	fake.listImageArchivesMutex.RLock()
-	defer fake.listImageArchivesMutex.RUnlock()
-	fake.listTarballsMutex.RLock()
-	defer fake.listTarballsMutex.RUnlock()
-	fake.makeCrossMutex.RLock()
-	defer fake.makeCrossMutex.RUnlock()
-	fake.mergeMutex.RLock()
-	defer fake.mergeMutex.RUnlock()
-	fake.openRepoMutex.RLock()
-	defer fake.openRepoMutex.RUnlock()
-	fake.prepareWorkspaceStageMutex.RLock()
-	defer fake.prepareWorkspaceStageMutex.RUnlock()
-	fake.pushAttestationMutex.RLock()
-	defer fake.pushAttestationMutex.RUnlock()
-	fake.pushContainerImagesMutex.RLock()
-	defer fake.pushContainerImagesMutex.RUnlock()
-	fake.pushReleaseArtifactsMutex.RLock()
-	defer fake.pushReleaseArtifactsMutex.RUnlock()
-	fake.revParseMutex.RLock()
-	defer fake.revParseMutex.RUnlock()
-	fake.revParseTagMutex.RLock()
-	defer fake.revParseTagMutex.RUnlock()
-	fake.stageLocalArtifactsMutex.RLock()
-	defer fake.stageLocalArtifactsMutex.RUnlock()
-	fake.stageLocalSourceTreeMutex.RLock()
-	defer fake.stageLocalSourceTreeMutex.RUnlock()
-	fake.submitMutex.RLock()
-	defer fake.submitMutex.RUnlock()
-	fake.tagMutex.RLock()
-	defer fake.tagMutex.RUnlock()
-	fake.toFileMutex.RLock()
-	defer fake.toFileMutex.RUnlock()
-	fake.verifyArtifactsMutex.RLock()
-	defer fake.verifyArtifactsMutex.RUnlock()
-	fake.writeSourceBOMMutex.RLock()
-	defer fake.writeSourceBOMMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

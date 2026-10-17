@@ -17,10 +17,10 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -44,6 +44,7 @@ const (
 
 type checkPROptions struct {
 	options.Options
+
 	PullRequests []int
 }
 
@@ -53,12 +54,8 @@ func (o *checkPROptions) ValidateAndFinish() error {
 		lenErr = errors.New("no pull requests numbers specified")
 	}
 
-	for _, n := range o.PullRequests {
-		if n == 0 {
-			prNrErr = errors.New("invalid pull request number (must be an integer larger than 0)")
-
-			break
-		}
+	if slices.Contains(o.PullRequests, 0) {
+		prNrErr = errors.New("invalid pull request number (must be an integer larger than 0)")
 	}
 
 	if o.GithubOrg == "" {
@@ -157,7 +154,7 @@ To generate release notes from these blocks, use release-notes generate.
 		SilenceUsage:  false,
 		SilenceErrors: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			g, err := notes.NewGatherer(context.Background(), &options.Options{
+			g, err := notes.NewGatherer(cmd.Context(), &options.Options{
 				GithubBaseURL: checkPROpts.GithubBaseURL,
 				GithubOrg:     checkPROpts.GithubOrg,
 				GithubRepo:    checkPROpts.GithubRepo,

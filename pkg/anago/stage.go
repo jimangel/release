@@ -17,25 +17,34 @@ limitations under the License.
 package anago
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/blang/semver/v4"
 	gogit "github.com/go-git/go-git/v5"
-	intoto "github.com/in-toto/in-toto-golang/in_toto"
-	slsa "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
+	slsa "github.com/in-toto/attestation/go/predicates/provenance/v1"
+	intoto "github.com/in-toto/attestation/go/v1"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"sigs.k8s.io/bom/pkg/provenance"
+	"sigs.k8s.io/bom/pkg/bom"
+	"sigs.k8s.io/bom/pkg/license"
 	"sigs.k8s.io/bom/pkg/spdx"
 	"sigs.k8s.io/release-sdk/git"
+	"sigs.k8s.io/release-utils/command"
 	"sigs.k8s.io/release-utils/log"
 
+	buildtypev1 "k8s.io/release/pkg/anago/buildtypes/v1"
 	"k8s.io/release/pkg/build"
 	"k8s.io/release/pkg/changelog"
+	"k8s.io/release/pkg/gcp/auth"
 	"k8s.io/release/pkg/gcp/gcb"
 	"k8s.io/release/pkg/release"
 )
@@ -43,6 +52,7 @@ import (
 // stageClient is a client for staging releases.
 //
 //counterfeiter:generate . stageClient
+//nolint:interfacebloat // large interface is by design
 type stageClient interface {
 	// Submit can be used to submit a Google Cloud Build (GCB) job.
 	Submit(stream bool) error
@@ -133,6 +143,7 @@ type defaultStageImpl struct{}
 // stageImpl is the implementation of the stage client.
 //
 //counterfeiter:generate . stageImpl
+//nolint:interfacebloat // large interface is by design
 type stageImpl interface {
 	Submit(options *gcb.Options) error
 	ToFile(fileName string) error
@@ -154,6 +165,7 @@ type stageImpl interface {
 	Merge(repo *git.Repo, rev string) error
 	CheckReleaseBucket(options *build.Options) error
 	DockerHubLogin() error
+	ConfigureDocker() error
 	MakeCross(version string) error
 	GenerateChangelog(options *changelog.Options) error
 	StageLocalSourceTree(
@@ -165,20 +177,21 @@ type stageImpl interface {
 		options *build.Options, srcPath, gcsPath string,
 	) error
 	PushContainerImages(options *build.Options) error
+	GoModDownload(path string) error
 	GenerateVersionArtifactsBOM(string) error
-	GenerateSourceTreeBOM(options *spdx.DocGenerateOptions) (*spdx.Document, error)
+	GenerateSourceTreeBOM(options *bom.GenerateOptions) (*spdx.Document, error)
 	WriteSourceBOM(spdxDoc *spdx.Document, version string) error
 	ListBinaries(version string) ([]struct{ Path, Platform, Arch string }, error)
 	ListImageArchives(string) ([]string, error)
 	ListTarballs(version string) ([]string, error)
-	BuildBaseArtifactsSBOM(*spdx.DocGenerateOptions) (*spdx.Document, error)
+	BuildBaseArtifactsSBOM(*bom.GenerateOptions) (*spdx.Document, error)
 	AddBinariesToSBOM(*spdx.Document, string) error
 	AddTarfilesToSBOM(*spdx.Document, string) error
 	VerifyArtifacts([]string) error
-	GenerateAttestation(*StageState, *StageOptions) (*provenance.Statement, error)
-	PushAttestation(*provenance.Statement, *StageOptions) error
-	GetProvenanceSubjects(*StageOptions, string) ([]intoto.Subject, error)
-	GetOutputDirSubjects(*StageOptions, string, string) ([]intoto.Subject, error)
+	GenerateAttestation(*StageState, *StageOptions) (*intoto.Statement, error)
+	PushAttestation(*intoto.Statement, *StageOptions) error
+	GetProvenanceSubjects(*StageOptions, string) ([]*intoto.ResourceDescriptor, error)
+	GetOutputDirSubjects(*StageOptions, string, string) ([]*intoto.ResourceDescriptor, error)
 }
 
 func (d *defaultStageImpl) Submit(options *gcb.Options) error {
@@ -255,6 +268,10 @@ func (d *defaultStageImpl) MakeCross(version string) error {
 
 func (d *defaultStageImpl) DockerHubLogin() error {
 	return release.DockerHubLogin()
+}
+
+func (d *defaultStageImpl) ConfigureDocker() error {
+	return auth.ConfigureDocker()
 }
 
 func (d *defaultStageImpl) GenerateChangelog(options *changelog.Options) error {
@@ -422,17 +439,45 @@ func (d *DefaultStage) TagRepository() error {
 	for _, version := range d.state.versions.Ordered() {
 		logrus.Infof("Preparing version %s", version)
 
-		// Ensure that the tag not already exists
-		if _, err := d.impl.RevParseTag(repo, version); err == nil {
-			return fmt.Errorf("tag %s already exists", version)
-		}
-
 		// Usually the build version contains a commit we can reference. If
 		// not, because the build version is exactly a tag, then we fallback to
 		// that tag.
 		commit := d.options.BuildVersion
 		if len(d.state.semverBuildVersion.Build) > 0 {
 			commit = d.state.semverBuildVersion.Build[0]
+		}
+
+		// If the tag already exists from a previous (partial) run, verify it
+		// points to the expected commit and skip re-tagging. On release
+		// branches the tag sits on an empty release commit whose parent is the
+		// build version commit, so accept that case as well.
+		if existingTagCommit, err := d.impl.RevParseTag(repo, version); err == nil {
+			expectedCommitSHA, err := d.impl.RevParse(repo, commit)
+			if err != nil {
+				return fmt.Errorf("resolve expected commit %s: %w", commit, err)
+			}
+
+			if existingTagCommit == expectedCommitSHA {
+				logrus.Infof("Tag %s already points to correct commit %s, skipping tag creation", version, expectedCommitSHA)
+
+				continue
+			}
+
+			// On release branches the tag is created on an empty release
+			// commit whose first parent is the build commit, so accept that
+			// too. On the default branch the tag must point exactly at the
+			// build commit, so this exception is gated to release branches.
+			taggedOnReleaseBranch := strings.HasPrefix(d.options.ReleaseBranch, "release-") &&
+				(!d.state.createReleaseBranch || version == d.state.versions.Prime())
+			if taggedOnReleaseBranch {
+				if parentCommit, perr := d.impl.RevParse(repo, version+"^"); perr == nil && parentCommit == expectedCommitSHA {
+					logrus.Infof("Tag %s already points to a release commit on top of %s, skipping tag creation", version, expectedCommitSHA)
+
+					continue
+				}
+			}
+
+			return fmt.Errorf("tag %s already exists but points to commit %s, expected %s", version, existingTagCommit, expectedCommitSHA)
 		}
 
 		if d.state.createReleaseBranch {
@@ -445,10 +490,15 @@ func (d *DefaultStage) TagRepository() error {
 					d.options.ReleaseBranch, commit,
 				)
 
+				// Use -B so a re-run resets the branch to the build commit
+				// instead of failing if it already exists from a previous
+				// partial run. This also guarantees HEAD is at the build
+				// commit, so the empty release commit below is not stacked on
+				// top of a stale one.
 				if err := d.impl.Checkout(
-					repo, "-b", d.options.ReleaseBranch, commit,
+					repo, "-B", d.options.ReleaseBranch, commit,
 				); err != nil {
-					return fmt.Errorf("create new release branch: %w", err)
+					return fmt.Errorf("create release branch: %w", err)
 				}
 			} else {
 				logrus.Infof(
@@ -577,6 +627,10 @@ func (d *DefaultStage) Build() error {
 		return fmt.Errorf("logging into Docker Hub: %w", err)
 	}
 
+	// Login to Artifact Registry as well
+	if err := d.impl.ConfigureDocker(); err != nil {
+		return fmt.Errorf("configuring docker auth: %w", err)
+	}
 	// Call MakeCross for each of the versions we are building
 	for _, version := range d.state.versions.Ordered() {
 		if err := d.impl.MakeCross(version); err != nil {
@@ -669,9 +723,9 @@ func (d *defaultStageImpl) AddBinariesToSBOM(sbom *spdx.Document, version string
 
 		file.AddRelationship(&spdx.Relationship{
 			FullRender:       false,
-			PeerReference:    "SPDXRef-Package-kubernetes",
+			PeerReference:    kubernetesPackageRef,
 			PeerExtReference: "kubernetes-" + version,
-			Comment:          "Source code",
+			Comment:          sourceCodeComment,
 			Type:             spdx.GENERATED_FROM,
 		})
 	}
@@ -703,9 +757,9 @@ func (d *defaultStageImpl) AddTarfilesToSBOM(sbom *spdx.Document, version string
 
 		file.AddRelationship(&spdx.Relationship{
 			FullRender:       false,
-			PeerReference:    "SPDXRef-Package-kubernetes",
+			PeerReference:    kubernetesPackageRef,
 			PeerExtReference: "kubernetes-" + version,
-			Comment:          "Source code",
+			Comment:          sourceCodeComment,
 			Type:             spdx.GENERATED_FROM,
 		})
 	}
@@ -713,10 +767,37 @@ func (d *defaultStageImpl) AddTarfilesToSBOM(sbom *spdx.Document, version string
 	return nil
 }
 
-func (d *defaultStageImpl) BuildBaseArtifactsSBOM(options *spdx.DocGenerateOptions) (*spdx.Document, error) {
+func (d *defaultStageImpl) BuildBaseArtifactsSBOM(options *bom.GenerateOptions) (*spdx.Document, error) {
 	logrus.Info("Generating release artifacts SBOM")
 
-	return spdx.NewDocBuilder().Generate(options)
+	return generateSPDXDocument(options)
+}
+
+// generateSPDXDocument generates an SBOM and converts it to the SPDX object
+// model, completing it the same way bom does when writing SPDX documents.
+func generateSPDXDocument(options *bom.GenerateOptions) (*spdx.Document, error) {
+	pdoc, err := bom.Generate(context.Background(), options)
+	if err != nil {
+		return nil, fmt.Errorf("generating SBOM: %w", err)
+	}
+
+	doc, err := spdx.FromProtobom(pdoc)
+	if err != nil {
+		return nil, fmt.Errorf("converting SBOM to SPDX: %w", err)
+	}
+
+	listVersion, err := semver.ParseTolerant(license.DefaultCatalogOpts.Version)
+	if err != nil {
+		return nil, fmt.Errorf("parsing license list version: %w", err)
+	}
+
+	doc.LicenseListVersion = fmt.Sprintf("%d.%d", listVersion.Major, listVersion.Minor)
+
+	if doc.Creator.Organization == "" {
+		doc.Creator.Organization = sbomOrganization
+	}
+
+	return doc, nil
 }
 
 func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
@@ -727,18 +808,17 @@ func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
 
 	// Build the base artifacts sbom. We only pass it the images for
 	// now as the binaries and tarballs need more processing
-	doc, err := d.BuildBaseArtifactsSBOM(&spdx.DocGenerateOptions{
-		Name:           "Kubernetes Release " + version,
-		AnalyseLayers:  false,
-		OnlyDirectDeps: false,
-		License:        LicenseIdentifier,
-		Namespace:      fmt.Sprintf("https://sbom.k8s.io/%s/release", version),
-		ScanLicenses:   false,
-		Tarballs:       images,
-		OutputFile:     filepath.Join(),
+	doc, err := d.BuildBaseArtifactsSBOM(&bom.GenerateOptions{
+		Name:          "Kubernetes Release " + version,
+		Namespace:     fmt.Sprintf("https://sbom.k8s.io/%s/release", version),
+		ImageArchives: images,
 	})
 	if err != nil {
 		return fmt.Errorf("generating base artifacts sbom for %s: %w", version, err)
+	}
+
+	if len(doc.Packages) == 0 {
+		return fmt.Errorf("no images in the base artifacts sbom for %s", version)
 	}
 
 	// Add the binaries and tarballs
@@ -763,13 +843,15 @@ func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
 
 	doc.ExternalDocRefs = append(doc.ExternalDocRefs, extRef)
 
-	// Stamp all packages. We do this here because it includes both images and
+	// Stamp all packages, which are the images, as generated from the source
+	// code. The binaries and tarballs got the same relationship when they were
+	// added as files.
 	for _, pkg := range doc.Packages {
 		pkg.AddRelationship(&spdx.Relationship{
 			FullRender:       false,
-			PeerReference:    "SPDXRef-Package-kubernetes",
+			PeerReference:    kubernetesPackageRef,
 			PeerExtReference: "kubernetes-" + version,
-			Comment:          "Source code",
+			Comment:          sourceCodeComment,
 			Type:             spdx.GENERATED_FROM,
 		})
 	}
@@ -782,12 +864,22 @@ func (d *defaultStageImpl) GenerateVersionArtifactsBOM(version string) error {
 	return nil
 }
 
+func (d *defaultStageImpl) GoModDownload(path string) error {
+	logrus.Infof("Pre-populating Go module cache in %s", path)
+
+	if err := command.NewWithWorkDir(path, "go", "mod", "download").RunSuccess(); err != nil {
+		return fmt.Errorf("running go mod download in %s: %w", path, err)
+	}
+
+	return nil
+}
+
 func (d *defaultStageImpl) GenerateSourceTreeBOM(
-	options *spdx.DocGenerateOptions,
+	options *bom.GenerateOptions,
 ) (*spdx.Document, error) {
 	logrus.Info("Generating Kubernetes source SBOM file")
 
-	doc, err := spdx.NewDocBuilder().Generate(options)
+	doc, err := generateSPDXDocument(options)
 	if err != nil {
 		return nil, fmt.Errorf("generating Kubernetes source code SBOM: %w", err)
 	}
@@ -811,17 +903,19 @@ func (d *defaultStageImpl) WriteSourceBOM(
 }
 
 func (d *DefaultStage) GenerateBillOfMaterials() error {
+	// Pre-populate the Go module cache so that bom can fall back to the
+	// local go.mod copies when a module can't be fetched from the proxy.
+	if err := d.impl.GoModDownload(gitRoot); err != nil {
+		return fmt.Errorf("pre-populating go module cache: %w", err)
+	}
+
 	// For the Kubernetes source, we only generate the SBOM once as both
 	// versions are cut from the same point in the git history. The
 	// resulting SPDX document will be customized for each version
 	// in WriteSourceBOM() before writing the actual files.
-	spdxDOC, err := d.impl.GenerateSourceTreeBOM(&spdx.DocGenerateOptions{
-		ProcessGoModules: true,
-		License:          LicenseIdentifier,
-		OutputFile:       filepath.Join(os.TempDir(), "kubernetes-source.spdx"),
-		Namespace:        "https://sbom.k8s.io/REPLACE/source", // This one gets replaced when writing to disk
-		ScanLicenses:     true,
-		Directories:      []string{gitRoot},
+	spdxDOC, err := d.impl.GenerateSourceTreeBOM(&bom.GenerateOptions{
+		Namespace:   "https://sbom.k8s.io/REPLACE/source", // This one gets replaced when writing to disk
+		Directories: []string{gitRoot},
 	})
 	if err != nil {
 		return fmt.Errorf("generating the kubernetes source SBOM: %w", err)
@@ -967,62 +1061,69 @@ func (d *DefaultStage) StageArtifacts() error {
 
 // GenerateAttestation creates a provenance attestation with its predicate
 // preloaded with the current krel run information.
-func (d *defaultStageImpl) GenerateAttestation(state *StageState, options *StageOptions) (attestation *provenance.Statement, err error) {
-	// Build the arguments RawMessage:
-	arguments := map[string]string{
-		"type":          options.ReleaseType,
-		"branch":        options.ReleaseBranch,
-		"build-version": options.BuildVersion,
-	}
-	if options.NoMock {
-		arguments["nomock"] = "true"
+func (d *defaultStageImpl) GenerateAttestation(state *StageState, options *StageOptions) (attestation *intoto.Statement, err error) {
+	// Build the external parameters as defined by the krel buildType:
+	extParameters, err := protoToStruct(&buildtypev1.ExternalParameters{
+		ReleaseType:   options.ReleaseType,
+		ReleaseBranch: options.ReleaseBranch,
+		BuildVersion:  options.BuildVersion,
+		Nomock:        options.NoMock,
+		EntryPoint:    "https://git.k8s.io/release/gcb/stage/cloudbuild.yaml",
+	}, true)
+	if err != nil {
+		return nil, fmt.Errorf("building external parameters: %w", err)
 	}
 
-	// Fetch the last commit:
+	// Resolve the sources the artifacts were built from:
 	repo, err := git.OpenRepo(gitRoot)
 	if err != nil {
-		return nil, fmt.Errorf("opening repository to check commit hash: %w", err)
+		return nil, fmt.Errorf("opening repository to resolve the sources: %w", err)
 	}
 
-	// Get the k/k commit we are building
-	commitSHA, err := repo.LastCommitSha()
+	sources, err := sourceDependencies(repo, state)
 	if err != nil {
-		return nil, fmt.Errorf("getting k/k build point: %w", err)
+		return nil, err
 	}
 
 	// Create the predicate to populate it with the current
 	// run metadata:
-	p := provenance.NewSLSAPredicate()
+	predicate := &slsa.Provenance{
+		BuildDefinition: &slsa.BuildDefinition{
+			BuildType:            buildtypev1.BuildType,
+			ExternalParameters:   extParameters,
+			InternalParameters:   &structpb.Struct{},
+			ResolvedDependencies: sources,
+		},
+		RunDetails: &slsa.RunDetails{
+			Builder: &slsa.Builder{
+				Id:                  "https://git.k8s.io/release/docs/krel",
+				Version:             map[string]string{},
+				BuilderDependencies: []*intoto.ResourceDescriptor{},
+			},
+			Metadata: &slsa.BuildMetadata{
+				InvocationId: os.Getenv("BUILD_ID"),
+				StartedOn:    timestamppb.New(state.startTime.UTC()),
+			},
+			Byproducts: []*intoto.ResourceDescriptor{},
+		},
+	}
 
-	// SLSA v02, builder ID is a TypeURI
-	p.Builder.ID = "https://git.k8s.io/release/docs/krel"
+	predicateStruct, err := protoToStruct(predicate, false)
+	if err != nil {
+		return nil, err
+	}
 
-	// Some of these fields have yet to be checked to assign the
-	// correct values to them
-	// This is commented as the in-toto go port does not have it
-	p.Metadata.BuildInvocationID = os.Getenv("BUILD_ID")
-	p.Metadata.Completeness.Parameters = true // The parameters are complete as we know the from GCB
-	p.Metadata.Completeness.Materials = true  // The materials are complete as we only use the github repo
-	startTime := state.startTime.UTC()
-	endTime := time.Now().UTC()
-	p.Metadata.BuildStartedOn = &startTime
-	p.Metadata.BuildFinishedOn = &endTime
-	p.Invocation.ConfigSource.EntryPoint = "https://git.k8s.io/release/gcb/stage/cloudbuild.yaml"
-	p.BuildType = "https://cloudbuild.googleapis.com/CloudBuildYaml@v1"
-	p.Invocation.Parameters = arguments
-
-	p.AddMaterial("git+https://github.com/kubernetes/kubernetes", slsa.DigestSet{"sha1": commitSHA})
-
-	// Create the new attestation and attach the predicate
-	attestation = provenance.NewSLSAStatement()
-	attestation.Predicate = p
-
-	return attestation, nil
+	return &intoto.Statement{
+		Type:          intoto.StatementTypeUri,
+		Subject:       []*intoto.ResourceDescriptor{},
+		PredicateType: "https://slsa.dev/provenance/v1",
+		Predicate:     predicateStruct,
+	}, nil
 }
 
 // PushAttestation writes the provenance metadata to the staging location in
 // the Google Cloud Bucket.
-func (d *defaultStageImpl) PushAttestation(attestation *provenance.Statement, options *StageOptions) (err error) {
+func (d *defaultStageImpl) PushAttestation(attestation *intoto.Statement, options *StageOptions) (err error) {
 	gcsPath := filepath.Join(options.Bucket(), release.StagePath, options.BuildVersion)
 
 	// Create a temporary file:
@@ -1030,12 +1131,38 @@ func (d *defaultStageImpl) PushAttestation(attestation *provenance.Statement, op
 	if err != nil {
 		return fmt.Errorf("creating temp file for provenance metadata: %w", err)
 	}
-	// Write the provenance statement to disk:
-	if err := attestation.Write(f.Name()); err != nil {
-		return fmt.Errorf("writing provenance attestation to disk: %w", err)
+	defer f.Close()
+
+	// Staging is complete at this point, so record the build end time
+	// in the predicate before serializing the statement:
+	predicate, err := provenanceFromStruct(attestation.GetPredicate())
+	if err != nil {
+		return err
 	}
 
-	// TODO for SLSA2: Sign the attestation
+	if predicate.GetRunDetails() == nil {
+		predicate.RunDetails = &slsa.RunDetails{}
+	}
+
+	if predicate.GetRunDetails().GetMetadata() == nil {
+		predicate.RunDetails.Metadata = &slsa.BuildMetadata{}
+	}
+
+	predicate.RunDetails.Metadata.FinishedOn = timestamppb.Now()
+
+	if attestation.Predicate, err = protoToStruct(predicate, false); err != nil {
+		return err
+	}
+
+	// Write the provenance statement to disk:
+	jsonData, err := protojson.Marshal(attestation)
+	if err != nil {
+		return fmt.Errorf("marshaling provenance attestation: %w", err)
+	}
+
+	if _, err := f.Write(jsonData); err != nil {
+		return fmt.Errorf("writing provenance attestation to disk: %w", err)
+	}
 
 	// Upload the metadata file to the staging bucket
 	pushBuildOptions := &build.Options{
@@ -1055,11 +1182,77 @@ func (d *defaultStageImpl) PushAttestation(attestation *provenance.Statement, op
 	return nil
 }
 
+// sourceDependencies returns the Kubernetes sources the artifacts were
+// built from as resource descriptors. The artifacts of each version are
+// built from the checkout of its release tag, so one descriptor per tag is
+// returned, with the digest of the commit the tag points to.
+func sourceDependencies(repo *git.Repo, state *StageState) ([]*intoto.ResourceDescriptor, error) {
+	if state.versions == nil || len(state.versions.Ordered()) == 0 {
+		return nil, errors.New("no release versions to resolve the sources from")
+	}
+
+	// Reference the repository the workspace was cloned from, which may be
+	// a fork when running in mock mode.
+	repoURI := "git+" + git.GetRepoURL(release.GetK8sOrg(), release.GetK8sRepo(), false)
+
+	sources := []*intoto.ResourceDescriptor{}
+
+	for _, version := range state.versions.Ordered() {
+		commitSHA, err := repo.RevParseTag(version)
+		if err != nil {
+			return nil, fmt.Errorf("resolving commit of tag %s: %w", version, err)
+		}
+
+		sources = append(sources, &intoto.ResourceDescriptor{
+			Uri: repoURI + "@refs/tags/" + version,
+			Digest: map[string]string{
+				intoto.AlgorithmSHA1.String():      commitSHA,
+				intoto.AlgorithmGitCommit.String(): commitSHA,
+			},
+		})
+	}
+
+	return sources, nil
+}
+
+// protoToStruct converts a proto message into the generic proto struct.
+// When emitDefaultValues is set, fields set to their default values are
+// kept so that the resulting struct records the message in full.
+func protoToStruct(msg proto.Message, emitDefaultValues bool) (*structpb.Struct, error) {
+	data, err := protojson.MarshalOptions{EmitDefaultValues: emitDefaultValues}.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling %T: %w", msg, err)
+	}
+
+	res := &structpb.Struct{}
+	if err := protojson.Unmarshal(data, res); err != nil {
+		return nil, fmt.Errorf("converting %T to struct: %w", msg, err)
+	}
+
+	return res, nil
+}
+
+// provenanceFromStruct parses the predicate struct of an in-toto statement back
+// into the typed SLSA provenance predicate.
+func provenanceFromStruct(predicate *structpb.Struct) (*slsa.Provenance, error) {
+	data, err := protojson.Marshal(predicate)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling provenance predicate struct: %w", err)
+	}
+
+	res := &slsa.Provenance{}
+	if err := protojson.Unmarshal(data, res); err != nil {
+		return nil, fmt.Errorf("parsing provenance predicate: %w", err)
+	}
+
+	return res, nil
+}
+
 // GetOutputDirSubjects reads the built artifacts and returns them
 // as intoto subjects. All paths are translated to their final path in the bucket.
 func (d *defaultStageImpl) GetOutputDirSubjects(
 	options *StageOptions, path, version string,
-) ([]intoto.Subject, error) {
+) ([]*intoto.ResourceDescriptor, error) {
 	return release.NewProvenanceReader(&release.ProvenanceReaderOptions{
 		Bucket:       options.Bucket(),
 		BuildVersion: options.BuildVersion,
@@ -1071,7 +1264,7 @@ func (d *defaultStageImpl) GetOutputDirSubjects(
 // the staging bucket location.
 func (d *defaultStageImpl) GetProvenanceSubjects(
 	options *StageOptions, path string,
-) ([]intoto.Subject, error) {
+) ([]*intoto.ResourceDescriptor, error) {
 	return release.NewProvenanceReader(&release.ProvenanceReaderOptions{
 		Bucket:       options.Bucket(),
 		BuildVersion: options.BuildVersion,

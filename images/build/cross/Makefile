@@ -27,15 +27,15 @@ IMGNAME = kube-cross
 # Example:
 # - v1.100.0-go1.17-bullseye.0 satisfies SemVer regex, while:
 # - v1.100-go1.17-bullseye.0 does not
-KUBERNETES_VERSION ?= v1.33.0
-GO_VERSION ?= 1.24.5
-GO_MAJOR_VERSION ?= 1.24
+KUBERNETES_VERSION ?= v1.38.0
+GO_VERSION ?= 1.27.2
+GO_MAJOR_VERSION ?= 1.27
 OS_CODENAME ?= bullseye
 REVISION ?= 0
 TYPE ?= default
 
 # Build args
-BASEIMAGE ?= golang:$(GO_VERSION)-$(OS_CODENAME)
+BASEIMAGE ?= debian:$(OS_CODENAME)-slim
 PROTOBUF_VERSION ?= 3.19.4
 
 IMAGE = $(REGISTRY)/$(IMGNAME)
@@ -47,18 +47,10 @@ BUILD_METADATA = go$(GO_VERSION)-$(OS_CODENAME).$(REVISION)
 
 IMAGE_VERSION = $(KUBERNETES_VERSION)-$(BUILD_METADATA)
 
-# Ensure support for 'docker buildx' and 'docker manifest' commands
-export DOCKER_CLI_EXPERIMENTAL=enabled
+PLATFORMS ?= linux/amd64 linux/arm64 linux/ppc64le linux/s390x
 
-# TODO: Support multi-arch kube-cross images for linux/arm
-#       Currently some of the components references in the Dockerfile are
-#       not supported in specific architectures
-PLATFORMS ?= linux/amd64 linux/arm64 #linux/arm
-
-# for legacy images only build linux/amd64
-ifeq ($(TYPE), legacy)
-  PLATFORMS = linux/amd64
-endif
+KUBE_DYNAMIC_CROSSPLATFORMS ?= "arm64 armhf i386 ppc64el s390x"
+KUBE_CROSSPLATFORMS ?= "linux/386 linux/arm linux/arm64 linux/ppc64le linux/s390x darwin/amd64 windows/amd64 windows/386"
 
 ARCHS = $(patsubst linux/%,%,$(PLATFORMS))
 
@@ -70,7 +62,7 @@ endif
 # build with buildx
 # https://github.com/docker/buildx/issues/59
 .PHONY: container
-container: check-env init-docker-buildx
+container: check-env
 	echo "Building $(IMGNAME) for the following platforms: $(PLATFORMS)"
 	@for platform in $(PLATFORMS); do \
 		echo "Starting build for $${platform} platform"; \
@@ -83,6 +75,10 @@ container: check-env init-docker-buildx
 			--tag $(IMAGE)-$${platform##*/}:latest-$(CONFIG)-$(TYPE) \
 			--build-arg=BASEIMAGE=$(BASEIMAGE) \
 			--build-arg=PROTOBUF_VERSION=$(PROTOBUF_VERSION) \
+			--build-arg=TARGETPLATFORM=$${platform} \
+			--build-arg=GO_VERSION=$(GO_VERSION) \
+			--build-arg=KUBE_DYNAMIC_CROSSPLATFORMS=$(KUBE_DYNAMIC_CROSSPLATFORMS) \
+			--build-arg=KUBE_CROSSPLATFORMS=$(KUBE_CROSSPLATFORMS) \
 			--file $(TYPE)/Dockerfile \
 			.; \
 	done
@@ -103,7 +99,3 @@ manifest: push
 	@for platform in $(ARCHS); do docker manifest annotate --arch "$${platform}" ${IMAGE}:${IMAGE_VERSION} ${IMAGE}-$${platform}:${IMAGE_VERSION}; done
 	docker manifest push --purge $(IMAGE):$(IMAGE_VERSION)
 
-# enable buildx
-.PHONY: init-docker-buildx
-init-docker-buildx:
-	./../../../hack/init-buildx.sh

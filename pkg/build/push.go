@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,8 +30,9 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/sirupsen/logrus"
 
+	"sigs.k8s.io/release-sdk/git"
+	"sigs.k8s.io/release-utils/helpers"
 	"sigs.k8s.io/release-utils/tar"
-	"sigs.k8s.io/release-utils/util"
 
 	"k8s.io/release/pkg/release"
 )
@@ -221,9 +224,15 @@ func (bi *Instance) findLatestVersion() (latestVersion string, err error) {
 		latestVersion += "-" + bi.opts.VersionSuffix
 	}
 
+	latestVersion = strings.TrimSpace(latestVersion)
+
+	// Update opts.Version so that StageLocalArtifacts and
+	// PushReleaseArtifacts use the same resolved version path.
+	bi.opts.Version = latestVersion
+
 	setupBuildDir(bi)
 
-	return strings.TrimSpace(latestVersion), nil
+	return latestVersion, nil
 }
 
 func setupBuildDir(bi *Instance) {
@@ -294,14 +303,14 @@ func (bi *Instance) StageLocalArtifacts() error {
 
 	logrus.Infof("Cleaning staging dir %s", stageDir)
 
-	if err := util.RemoveAndReplaceDir(stageDir); err != nil {
+	if err := helpers.RemoveAndReplaceDir(stageDir); err != nil {
 		return fmt.Errorf("remove and replace GCS staging directory: %w", err)
 	}
 
 	// Copy release tarballs to local GCS staging directory for push
 	logrus.Info("Copying release tarballs")
 
-	if err := util.CopyDirContentsLocal(
+	if err := helpers.CopyDirContentsLocal(
 		filepath.Join(bi.opts.BuildDir, release.ReleaseTarsPath), stageDir,
 	); err != nil {
 		return fmt.Errorf("copy source directory into destination: %w", err)
@@ -326,7 +335,7 @@ func (bi *Instance) StageLocalArtifacts() error {
 	// Copy the plain binaries to GCS. This is useful for install scripts that
 	// download the binaries directly and don't need tars.
 	plainBinariesPath := filepath.Join(bi.opts.BuildDir, release.ReleaseStagePath)
-	if util.Exists(plainBinariesPath) {
+	if helpers.Exists(plainBinariesPath) {
 		logrus.Info("Copying plain binaries")
 
 		if err := release.CopyBinaries(
@@ -346,7 +355,7 @@ func (bi *Instance) StageLocalArtifacts() error {
 		"kubernetes-source.spdx":  filepath.Join(os.TempDir(), fmt.Sprintf("source-bom-%s.spdx", bi.opts.Version)),
 		"kubernetes-release.spdx": filepath.Join(os.TempDir(), fmt.Sprintf("release-bom-%s.spdx", bi.opts.Version)),
 	} {
-		if err := util.CopyFileLocal(
+		if err := helpers.CopyFileLocal(
 			sbom, filepath.Join(stageDir, filename), false,
 		); err != nil {
 			return fmt.Errorf("copying SBOM manifests: %w", err)
@@ -382,7 +391,7 @@ func (bi *Instance) copyStageFiles(stageDir string, files []stageFile) error {
 			}
 		}
 
-		if err := util.CopyFileLocal(
+		if err := helpers.CopyFileLocal(
 			filepath.Join(bi.opts.BuildDir, file.srcPath),
 			dstPath, file.required,
 		); err != nil {
@@ -435,6 +444,12 @@ func (bi *Instance) PushContainerImages() error {
 	}
 
 	images := release.NewImages()
+
+	if bi.opts.NoSign {
+		logrus.Info("Signing is disabled, will not sign container images")
+
+		images.SetSigningEnabled(false)
+	}
 
 	logrus.Infof("Publishing container images for %s", bi.opts.Version)
 
@@ -519,13 +534,20 @@ func (bi *Instance) StageLocalSourceTree(workDir, buildVersion string) error {
 	tarballPath := filepath.Join(workDir, release.SourcesTar)
 	logrus.Infof("Creating source tree tarball %s", tarballPath)
 
-	exclude, err := regexp.Compile(fmt.Sprintf(`.*/%s-.*`, release.BuildDir))
+	excludeBuildDir, err := regexp.Compile(fmt.Sprintf(`.*/%s-.*`, release.BuildDir))
 	if err != nil {
 		return fmt.Errorf("compile tarball exclude regex: %w", err)
 	}
 
+	// The tarball ships the workspace clones, including their git
+	// directories, as the release process relies on their state. Make sure
+	// no repository leaks the credentials embedded in its remote URLs:
+	if err := stripRemoteCredentials(filepath.Join(workDir, "src")); err != nil {
+		return fmt.Errorf("stripping remote credentials from workspace repositories: %w", err)
+	}
+
 	if err := tar.Compress(
-		tarballPath, filepath.Join(workDir, "src"), exclude,
+		tarballPath, filepath.Join(workDir, "src"), excludeBuildDir,
 	); err != nil {
 		return fmt.Errorf("create tarball: %w", err)
 	}
@@ -544,6 +566,60 @@ func (bi *Instance) StageLocalSourceTree(workDir, buildVersion string) error {
 	}
 
 	return nil
+}
+
+// stripRemoteCredentials replaces the remote URLs of every git repository
+// found under path with their equivalents without credentials. The workspace
+// clones authenticate with the GitHub token embedded in their remote URLs,
+// which must not leak into the staged source tarball.
+func stripRemoteCredentials(path string) error {
+	return filepath.WalkDir(path, func(entry string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !d.IsDir() || d.Name() != ".git" {
+			return nil
+		}
+
+		repoPath := filepath.Dir(entry)
+
+		repo, err := git.OpenRepo(repoPath)
+		if err != nil {
+			return fmt.Errorf("opening workspace repository %s: %w", repoPath, err)
+		}
+
+		remotes, err := repo.Remotes()
+		if err != nil {
+			return fmt.Errorf("listing remotes of %s: %w", repoPath, err)
+		}
+
+		for _, remote := range remotes {
+			for _, remoteURL := range remote.URLs() {
+				parsed, err := url.Parse(remoteURL)
+				if err != nil || parsed.User == nil {
+					continue
+				}
+
+				parsed.User = nil
+
+				logrus.Infof(
+					"Removing credentials from remote %s of %s", remote.Name(), repoPath,
+				)
+
+				if err := repo.SetURL(remote.Name(), parsed.String()); err != nil {
+					return fmt.Errorf("setting URL of remote %s: %w", remote.Name(), err)
+				}
+
+				// SetURL replaces all remote URLs; break to avoid
+				// iterating the now-stale URL list.
+				break
+			}
+		}
+
+		// Do not descend into the git directory itself
+		return filepath.SkipDir
+	})
 }
 
 // DeleteLocalSourceTarball the deletion of the tarball is now decoupled from

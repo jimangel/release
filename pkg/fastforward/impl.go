@@ -19,12 +19,12 @@ package fastforward
 import (
 	"os"
 
-	gogithub "github.com/google/go-github/v72/github"
+	gogithub "github.com/google/go-github/v88/github"
 
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/github"
 	"sigs.k8s.io/release-utils/env"
-	"sigs.k8s.io/release-utils/util"
+	"sigs.k8s.io/release-utils/helpers"
 
 	"k8s.io/release/pkg/gcp/gcb"
 	"k8s.io/release/pkg/release"
@@ -36,6 +36,7 @@ type defaultImpl struct{}
 //counterfeiter:generate . impl
 //go:generate /usr/bin/env bash -c "cat ../../hack/boilerplate/boilerplate.generatego.txt fastforwardfakes/fake_impl.go > fastforwardfakes/_fake_impl.go && mv fastforwardfakes/_fake_impl.go fastforwardfakes/fake_impl.go"
 
+//nolint:interfacebloat // large interface is by design
 type impl interface {
 	CloneOrOpenDefaultGitHubRepoSSH(string) (*git.Repo, error)
 	RepoSetDry(*git.Repo)
@@ -115,7 +116,7 @@ func (*defaultImpl) RepoDir(r *git.Repo) string {
 }
 
 func (*defaultImpl) Ask(q, e string, r int) (answer string, success bool, err error) {
-	return util.Ask(q, e, r)
+	return helpers.Ask(q, e, r)
 }
 
 func (*defaultImpl) RepoPush(r *git.Repo, remoteBranch string) error {
@@ -163,7 +164,7 @@ func (*defaultImpl) MkdirTemp(dir, pattern string) (string, error) {
 }
 
 func (*defaultImpl) Exists(path string) bool {
-	return util.Exists(path)
+	return helpers.Exists(path)
 }
 
 func (*defaultImpl) ConfigureGlobalDefaultUserAndEmail() error {

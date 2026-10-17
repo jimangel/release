@@ -16,7 +16,14 @@ limitations under the License.
 
 package consts
 
-import "github.com/sirupsen/logrus"
+import (
+	"slices"
+	"time"
+
+	"github.com/sirupsen/logrus"
+
+	khttp "sigs.k8s.io/release-utils/http"
+)
 
 const (
 	PackageCRITools      string = "cri-tools"
@@ -68,19 +75,29 @@ const (
 	DefaultSpecTemplatePath        = "cmd/krel/templates/latest"
 )
 
+const (
+	// httpRetries is the default number of retries for HTTP requests.
+	httpRetries uint = 5
+	// httpTimeout is the default timeout for HTTP requests.
+	httpTimeout = 30 * time.Second
+	// httpRetryWaitTime is the initial backoff wait time between HTTP retries.
+	httpRetryWaitTime = 5 * time.Second
+)
+
+// NewHTTPAgent returns an HTTP agent configured with default retry and timeout
+// settings suitable for CDN-backed URLs.
+func NewHTTPAgent() *khttp.Agent {
+	return khttp.NewAgent().
+		WithTimeout(httpTimeout).
+		WithRetries(httpRetries).
+		WithWaitTime(httpRetryWaitTime)
+}
+
 func IsSupported(field string, input, expected []string) bool {
 	notSupported := []string{}
 
 	for _, i := range input {
-		supported := false
-
-		for _, j := range expected {
-			if i == j {
-				supported = true
-
-				break
-			}
-		}
+		supported := slices.Contains(expected, i)
 
 		if !supported {
 			notSupported = append(notSupported, i)

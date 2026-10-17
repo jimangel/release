@@ -30,15 +30,15 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"sigs.k8s.io/promo-tools/v3/image"
+	"sigs.k8s.io/promo-tools/v4/image/consts"
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/github"
 	"sigs.k8s.io/release-sdk/object"
 	"sigs.k8s.io/release-utils/command"
 	"sigs.k8s.io/release-utils/env"
 	rhash "sigs.k8s.io/release-utils/hash"
+	"sigs.k8s.io/release-utils/helpers"
 	"sigs.k8s.io/release-utils/tar"
-	"sigs.k8s.io/release-utils/util"
 )
 
 const (
@@ -51,10 +51,7 @@ const (
 	DefaultK8sRef  = git.DefaultRef
 
 	// TODO(vdf): Need to reference K8s Infra project here.
-	DefaultKubernetesStagingProject = "kubernetes-release-test"
-	DefaultRelengStagingTestProject = "k8s-staging-releng-test"
-	DefaultRelengStagingProject     = "k8s-staging-releng"
-	DefaultDiskSize                 = "500"
+	DefaultKubernetesStagingProject = "k8s-release"
 
 	versionReleaseRE   = `v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-?([a-zA-Z0-9]+\.(0|[1-9][0-9]*)\.)?`
 	versionBuildRE     = `([0-9]{1,})\+([0-9a-f]{5,40})`
@@ -91,14 +88,11 @@ const (
 	// WindowsLocalPath is the directory where Windows GCE scripts are created.
 	WindowsLocalPath = ReleaseStagePath + "/full/kubernetes/cluster/gce/windows"
 
-	// CIBucketLegacy is the default bucket for Kubernetes CI releases.
-	CIBucketLegacy = "kubernetes-release-dev"
-
 	// CIBucketK8sInfra is the community infra bucket for Kubernetes CI releases.
 	CIBucketK8sInfra = "k8s-release-dev"
 
 	// TestBucket is the default bucket for mocked Kubernetes releases.
-	TestBucket = "kubernetes-release-gcb"
+	TestBucket = "5d7373bbdcb8270361b96548387bf2a9ad0d48758c35"
 
 	// ProductionBucket is the default bucket for Kubernetes releases.
 	// Owned by SIG k8s Infra: https://git.k8s.io/community/sig-k8s-infra
@@ -108,13 +102,13 @@ const (
 	ProductionBucketURL = "https://dl.k8s.io"
 
 	// Production registry root URL.
-	GCRIOPathProd = image.ProdRegistry
+	GCRIOPathProd = consts.ProdRegistry
 
 	// Staging registry root URL prefix.
-	GCRIOPathStagingPrefix = image.StagingRepoPrefix
+	GCRIOPathStagingPrefix = consts.StagingRepoPrefix
 
 	// Staging registry root URL.
-	GCRIOPathStaging = GCRIOPathStagingPrefix + image.StagingRepoSuffix
+	GCRIOPathStaging = "gcr.io/k8s-staging-kubernetes"
 
 	// Mock staging registry root URL.
 	GCRIOPathMock = GCRIOPathStaging + "/mock"
@@ -303,7 +297,7 @@ func CopyBinaries(rootPath, targetPath string) error {
 		// We assume here the "server package" is a superset of the "client
 		// package"
 		serverSrc := filepath.Join(rootPath, "server", platformArch.Name())
-		if util.Exists(serverSrc) {
+		if helpers.Exists(serverSrc) {
 			logrus.Infof("Server source found in %s, copying them", serverSrc)
 			src = filepath.Join(serverSrc, "kubernetes", "server", "bin")
 		}
@@ -311,18 +305,18 @@ func CopyBinaries(rootPath, targetPath string) error {
 		dst := filepath.Join(targetPath, "bin", platform, arch)
 		logrus.Infof("Copying server binaries from %s to %s", src, dst)
 
-		if err := util.CopyDirContentsLocal(src, dst); err != nil {
+		if err := helpers.CopyDirContentsLocal(src, dst); err != nil {
 			return fmt.Errorf("copy server binaries from %s to %s: %w", src, dst, err)
 		}
 
 		// Copy node binaries if they exist and this isn't a 'server' platform
 		nodeSrc := filepath.Join(rootPath, "node", platformArch.Name())
-		if !util.Exists(serverSrc) && util.Exists(nodeSrc) {
+		if !helpers.Exists(serverSrc) && helpers.Exists(nodeSrc) {
 			src = filepath.Join(nodeSrc, "kubernetes", "node", "bin")
 
 			logrus.Infof("Copying node binaries from %s to %s", src, dst)
 
-			if err := util.CopyDirContentsLocal(src, dst); err != nil {
+			if err := helpers.CopyDirContentsLocal(src, dst); err != nil {
 				return fmt.Errorf("copy node binaries from %s to %s: %w", src, dst, err)
 			}
 		}
@@ -346,6 +340,7 @@ func WriteChecksums(rootPath string) error {
 				if err != nil {
 					return err
 				}
+
 				if info.IsDir() {
 					return nil
 				}
@@ -390,7 +385,7 @@ func WriteChecksums(rootPath string) error {
 	// After all the checksum files are generated, move them into the bucket
 	// staging area
 	moveFile := func(file string) error {
-		if err := util.CopyFileLocal(
+		if err := helpers.CopyFileLocal(
 			file, filepath.Join(rootPath, file), true,
 		); err != nil {
 			return fmt.Errorf("move %s sums file to %s: %w", file, rootPath, err)
@@ -432,6 +427,7 @@ func WriteChecksums(rootPath string) error {
 			if err != nil {
 				return err
 			}
+
 			if file.IsDir() {
 				return nil
 			}

@@ -26,8 +26,8 @@ import (
 
 	"sigs.k8s.io/release-sdk/git"
 	"sigs.k8s.io/release-sdk/object"
+	"sigs.k8s.io/release-utils/helpers"
 	"sigs.k8s.io/release-utils/log"
-	"sigs.k8s.io/release-utils/util"
 
 	"k8s.io/release/pkg/announce"
 	"k8s.io/release/pkg/announce/github"
@@ -39,6 +39,7 @@ import (
 // releaseClient is a client for release a previously staged release.
 //
 //counterfeiter:generate . releaseClient
+//nolint:interfacebloat // large interface is by design
 type releaseClient interface {
 	// Submit can be used to submit a Google Cloud Build (GCB) job.
 	Submit(stream bool) error
@@ -121,6 +122,7 @@ type defaultReleaseImpl struct{}
 // releaseImpl is the implementation of the release client.
 //
 //counterfeiter:generate . releaseImpl
+//nolint:interfacebloat // large interface is by design
 type releaseImpl interface {
 	Submit(options *gcb.Options) error
 	ToFile(fileName string) error
@@ -539,7 +541,7 @@ func (d *DefaultRelease) CreateAnnouncement() error {
 	announceOpts.WithWorkDir(filepath.Join(workspaceDir, "src"))
 
 	// Get a semver from the prime tag
-	primeSemver, err := util.TagStringToSemver(d.state.versions.Prime())
+	primeSemver, err := helpers.TagStringToSemver(d.state.versions.Prime())
 	if err != nil {
 		return fmt.Errorf("parsing prime version into semver: %w", err)
 	}
@@ -609,7 +611,7 @@ func (d *DefaultRelease) UpdateGitHubPage() error {
 		Tag:                   d.state.versions.Prime(),
 		NoMock:                d.options.NoMock,
 		UpdateIfReleaseExists: true,
-		Name:                  "Kubernetes " + d.state.versions.Prime(),
+		Name:                  d.state.versions.Prime(),
 		Draft:                 false,
 		Owner:                 git.DefaultGithubOrg,
 		Repo:                  git.DefaultGithubRepo,

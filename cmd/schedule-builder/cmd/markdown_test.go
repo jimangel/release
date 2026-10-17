@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -31,7 +32,7 @@ import (
 const expectedPatchSchedule = `### Upcoming Monthly Releases
 
 | MONTHLY PATCH RELEASE | CHERRY PICK DEADLINE | TARGET DATE |
-|-----------------------|----------------------|-------------|
+|:----------------------|:---------------------|:------------|
 | June 2020             | 2020-06-12           | 2020-06-17  |
 
 ### Timeline
@@ -43,7 +44,7 @@ Next patch release is **X.Y.ZZZ**
 **X.Y** enters maintenance mode on **THEN** and End of Life is on **NOW**.
 
 | PATCH RELEASE | CHERRY PICK DEADLINE | TARGET DATE | NOTE |
-|---------------|----------------------|-------------|------|
+|:--------------|:---------------------|:------------|:-----|
 | X.Y.ZZZ       | 2020-06-12           | 2020-06-17  |      |
 | X.Y.XXX       | 2020-05-15           | 2020-05-20  | honk |
 | X.Y.YYY       | 2020-04-13           | 2020-04-16  |      |
@@ -91,20 +92,20 @@ The X.Y release cycle is proposed as follows:
 
 ## Timeline
 
-| **WHAT**  | **WHO** |  **WHEN**  | **WEEK** | **CI SIGNAL** |  |
-|-----------|---------|------------|----------|---------------|--|
-| Testing-A | tester  | 2020-06-17 | week 1   | green         |  |
-| Testing-B | tester  | 2020-06-19 | week 1   | green         |  |
-| Testing-C | tester  | 2020-06-20 | week 1   | green         |  |
-| Testing-D | tester  | 2020-06-21 | week 1   | green         |  |
-| Testing-E | tester  | 2020-06-22 | week 1   | green         |  |
-| Testing-F | tester  | 2020-06-25 | week 2   | green         |  |
-| Testing-G | tester  | 2020-06-26 | week 2   | green         |  |
-| Testing-H | tester  | 2020-06-27 | week 2   | green         |  |
-| Testing-I | tester  | 2020-06-27 | week 2   | green         |  |
-| Testing-J | tester  | 2020-06-27 | week 2   | green         |  |
-| Testing-K | tester  | 2020-06-28 | week 2   | green         |  |
-| Testing-L | tester  | 2020-06-28 | week 2   | green         |  |
+| ** WHAT ** | ** WHO ** | ** WHEN ** | ** WEEK ** | ** CI SIGNAL ** |   |
+|:-----------|:----------|:-----------|:-----------|:----------------|:--|
+| Testing-A  | tester    | 2020-06-17 | week 1     | green           |   |
+| Testing-B  | tester    | 2020-06-19 | week 1     | green           |   |
+| Testing-C  | tester    | 2020-06-20 | week 1     | green           |   |
+| Testing-D  | tester    | 2020-06-21 | week 1     | green           |   |
+| Testing-E  | tester    | 2020-06-22 | week 1     | green           |   |
+| Testing-F  | tester    | 2020-06-25 | week 2     | green           |   |
+| Testing-G  | tester    | 2020-06-26 | week 2     | green           |   |
+| Testing-H  | tester    | 2020-06-27 | week 2     | green           |   |
+| Testing-I  | tester    | 2020-06-27 | week 2     | green           |   |
+| Testing-J  | tester    | 2020-06-27 | week 2     | green           |   |
+| Testing-K  | tester    | 2020-06-28 | week 2     | green           |   |
+| Testing-L  | tester    | 2020-06-28 | week 2     | green           |   |
 
 ## Phases
 
@@ -338,7 +339,8 @@ func TestParseReleaseSchedule(t *testing.T) {
 
 	for _, tc := range testcases {
 		fmt.Printf("Test case: %s\n", tc.name)
-		out := parseReleaseSchedule(tc.schedule)
+		out, err := parseReleaseSchedule(tc.schedule)
+		require.NoError(t, err)
 		require.Equal(t, expectedReleaseSchedule, out)
 	}
 }
@@ -451,6 +453,69 @@ func TestUpdatePatchSchedule(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:    "succeed to move end of life release without next release",
+			refTime: time.Date(2024, 4, 3, 0, 0, 0, 0, time.UTC),
+			givenSchedule: PatchSchedule{
+				Schedules: []*Schedule{
+					{ // EOL, final patch release already shipped so next is unset
+						Release:       "1.20",
+						EndOfLifeDate: "2023-12-12",
+						PreviousPatches: []*PatchRelease{
+							{
+								Release:            "1.20.10",
+								CherryPickDeadline: "2023-12-08",
+								TargetDate:         "2023-12-12",
+							},
+							{
+								Release:            "1.20.9",
+								CherryPickDeadline: "2023-11-10",
+								TargetDate:         "2023-11-14",
+							},
+						},
+					},
+				},
+				UpcomingReleases: []*PatchRelease{
+					{
+						CherryPickDeadline: "2024-04-12",
+						TargetDate:         "2024-04-17",
+					},
+					{
+						CherryPickDeadline: "2024-05-10",
+						TargetDate:         "2024-05-14",
+					},
+					{
+						CherryPickDeadline: "2024-06-07",
+						TargetDate:         "2024-06-11",
+					},
+				},
+			},
+			expectedSchedule: PatchSchedule{
+				UpcomingReleases: []*PatchRelease{
+					{
+						CherryPickDeadline: "2024-04-12",
+						TargetDate:         "2024-04-17",
+					},
+					{
+						CherryPickDeadline: "2024-05-10",
+						TargetDate:         "2024-05-14",
+					},
+					{
+						CherryPickDeadline: "2024-06-07",
+						TargetDate:         "2024-06-11",
+					},
+				},
+			},
+			expectedEolBranches: EolBranches{
+				Branches: []*EolBranch{
+					{
+						Release:           "1.20",
+						FinalPatchRelease: "1.20.10",
+						EndOfLifeDate:     "2023-12-12",
+					},
+				},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scheduleFile, err := os.CreateTemp(t.TempDir(), "schedule-")
@@ -463,7 +528,7 @@ func TestUpdatePatchSchedule(t *testing.T) {
 
 			require.NoError(t, updatePatchSchedule(tc.refTime, tc.givenSchedule, EolBranches{}, scheduleFile.Name(), eolFile.Name()))
 
-			scheduleYamlBytes, err := os.ReadFile(scheduleFile.Name())
+			scheduleYamlBytes, err := os.ReadFile(scheduleFile.Name()) //nolint:gosec // G703 - temp file path is safe
 			require.NoError(t, err)
 
 			patchRes := PatchSchedule{}
@@ -471,13 +536,142 @@ func TestUpdatePatchSchedule(t *testing.T) {
 
 			assert.Equal(t, tc.expectedSchedule, patchRes)
 
-			eolYamlBytes, err := os.ReadFile(eolFile.Name())
+			eolYamlBytes, err := os.ReadFile(eolFile.Name()) //nolint:gosec // G703 - temp file path is safe
 			require.NoError(t, err)
 
 			eolRes := EolBranches{}
 			require.NoError(t, yaml.UnmarshalStrict(eolYamlBytes, &eolRes))
 
 			assert.Equal(t, tc.expectedEolBranches, eolRes)
+		})
+	}
+}
+
+func TestUpdatePatchScheduleMaintenanceWindow(t *testing.T) {
+	refTime := time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC)
+
+	// Four supported minors with the oldest (1.30) sitting in its
+	// maintenance window relative to refTime. Each Next.TargetDate is
+	// after refTime so the per-schedule patch-bump loop short-circuits.
+	baseSchedule := func() PatchSchedule {
+		return PatchSchedule{
+			Schedules: []*Schedule{
+				{
+					Release: "1.33",
+					Next: &PatchRelease{
+						Release:            "1.33.1",
+						CherryPickDeadline: "2026-06-05",
+						TargetDate:         "2026-06-09",
+					},
+					EndOfLifeDate:            "2027-06-01",
+					MaintenanceModeStartDate: "2027-03-01",
+				},
+				{
+					Release: "1.32",
+					Next: &PatchRelease{
+						Release:            "1.32.5",
+						CherryPickDeadline: "2026-06-05",
+						TargetDate:         "2026-06-09",
+					},
+					EndOfLifeDate:            "2027-02-01",
+					MaintenanceModeStartDate: "2026-11-01",
+				},
+				{
+					Release: "1.31",
+					Next: &PatchRelease{
+						Release:            "1.31.10",
+						CherryPickDeadline: "2026-06-05",
+						TargetDate:         "2026-06-09",
+					},
+					EndOfLifeDate:            "2026-10-01",
+					MaintenanceModeStartDate: "2026-08-01",
+				},
+				{
+					Release: "1.30",
+					Next: &PatchRelease{
+						Release:            "1.30.15",
+						CherryPickDeadline: "2026-06-05",
+						TargetDate:         "2026-06-09",
+					},
+					EndOfLifeDate:            "2026-07-01",
+					MaintenanceModeStartDate: "2026-04-01",
+				},
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		name              string
+		confirm           func(*Schedule) (bool, error)
+		mutate            func(PatchSchedule) PatchSchedule
+		wantUpcomingCount int
+		wantErr           string
+	}{
+		{
+			name:              "overlap accepted - extends upcoming to 4",
+			confirm:           func(*Schedule) (bool, error) { return true, nil },
+			wantUpcomingCount: 4,
+		},
+		{
+			name:              "overlap declined - upcoming stays at 3",
+			confirm:           func(*Schedule) (bool, error) { return false, nil },
+			wantUpcomingCount: 3,
+		},
+		{
+			name: "TBD maintenance date - prompter never called",
+			confirm: func(*Schedule) (bool, error) {
+				t.Fatal("confirmExtraUpcoming must not be called when MaintenanceModeStartDate is TBD")
+
+				return false, nil
+			},
+			mutate: func(s PatchSchedule) PatchSchedule {
+				s.Schedules[3].MaintenanceModeStartDate = "TBD"
+
+				return s
+			},
+			wantUpcomingCount: 3,
+		},
+		{
+			name:    "prompt error bubbles up",
+			confirm: func(*Schedule) (bool, error) { return false, errors.New("boom") },
+			wantErr: "boom",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := confirmExtraUpcoming
+
+			t.Cleanup(func() {
+				confirmExtraUpcoming = orig
+			})
+
+			confirmExtraUpcoming = tc.confirm
+
+			sched := baseSchedule()
+			if tc.mutate != nil {
+				sched = tc.mutate(sched)
+			}
+
+			scheduleFile, err := os.CreateTemp(t.TempDir(), "schedule-")
+			require.NoError(t, err)
+			require.NoError(t, scheduleFile.Close())
+
+			err = updatePatchSchedule(refTime, sched, EolBranches{}, scheduleFile.Name(), "")
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			scheduleYamlBytes, err := os.ReadFile(scheduleFile.Name()) //nolint:gosec // G304 - temp file path is safe
+			require.NoError(t, err)
+
+			patchRes := PatchSchedule{}
+			require.NoError(t, yaml.UnmarshalStrict(scheduleYamlBytes, &patchRes))
+
+			assert.Len(t, patchRes.UpcomingReleases, tc.wantUpcomingCount)
+			assert.Len(t, patchRes.Schedules, 4, "schedules[] count must be unchanged")
 		})
 	}
 }

@@ -17,6 +17,7 @@ limitations under the License.
 package document
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -72,7 +73,7 @@ type FileMetadata struct {
 // binaries in `dir`.
 func fetchFileMetadata(dir, urlPrefix, tag string) (*FileMetadata, error) {
 	if dir == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentional nil,nil return
 	}
 
 	if tag == "" {
@@ -104,7 +105,7 @@ func fetchFileMetadata(dir, urlPrefix, tag string) (*FileMetadata, error) {
 	}
 
 	if fileCount == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentional nil,nil return
 	}
 
 	return fm, nil
@@ -112,7 +113,7 @@ func fetchFileMetadata(dir, urlPrefix, tag string) (*FileMetadata, error) {
 
 func fetchImageMetadata(dir, tag string) (*ImageMetadata, error) {
 	if dir == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentional nil,nil return
 	}
 
 	if tag == "" {
@@ -127,7 +128,7 @@ func fetchImageMetadata(dir, tag string) (*ImageMetadata, error) {
 	}
 
 	if len(manifests) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentional nil,nil return
 	}
 
 	res := ImageMetadata{}
@@ -260,9 +261,9 @@ var kindMap = map[notes.Kind]notes.Kind{
 // GatherReleaseNotesDocument creates a new gatherer and collects the release
 // notes into a fresh document.
 func GatherReleaseNotesDocument(
-	opts *options.Options, previousRev, currentRev string,
+	ctx context.Context, opts *options.Options, previousRev, currentRev string,
 ) (*Document, error) {
-	releaseNotes, err := notes.GatherReleaseNotes(opts)
+	releaseNotes, err := notes.GatherReleaseNotes(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("gathering release notes: %w", err)
 	}
@@ -430,8 +431,8 @@ func (d *Document) template(templateSpec string) (string, error) {
 	templatePathOrOnline := strings.TrimPrefix(templateSpec, options.GoTemplatePrefix)
 
 	// Check for inline template
-	if strings.HasPrefix(templatePathOrOnline, options.GoTemplatePrefixInline) {
-		return strings.TrimPrefix(templatePathOrOnline, options.GoTemplatePrefixInline), nil
+	if after, ok := strings.CutPrefix(templatePathOrOnline, options.GoTemplatePrefixInline); ok {
+		return after, nil
 	}
 
 	// Assume file-based template
@@ -559,8 +560,7 @@ func mapKind(kind notes.Kind) notes.Kind {
 }
 
 func prettyKind(kind notes.Kind) string {
-	//nolint:exhaustive // all cases are covered by default
-	switch kind {
+	switch kind { //nolint:exhaustive // all cases are covered by default
 	case notes.KindAPIChange:
 		return "API Change"
 
